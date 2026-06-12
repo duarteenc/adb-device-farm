@@ -1,0 +1,42 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "msvc-x64",
+      "displayName": "MSVC x64 (Qt 6.11.1, RelWithDebInfo)",
+      "description": "Run from an 'x64 Native Tools Command Prompt for VS 2026' so cl.exe is on PATH. Uses the Ninja + CMake bundled with Qt.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/msvc2022_64",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_MAKE_PROGRAM": "C:/Qt/Tools/Ninja/ninja.exe"
+      }
+    },
+    {
+      "name": "msvc-x64-debug",
+      "inherits": "msvc-x64",
+      "displayName": "MSVC x64 (Qt 6.11.1, Debug)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "msvc-x64",
+      "configurePreset": "msvc-x64",
+      "jobs": 8
+    },
+    {
+      "name": "msvc-x64-debug",
+      "configurePreset": "msvc-x64-debug",
+      "jobs": 8
+    }
+  ]
+}
