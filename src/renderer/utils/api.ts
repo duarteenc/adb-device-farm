@@ -58,4 +58,18 @@ export const api = {
       ipcRenderer.on('log:clear', () => callback());
     },
   },
+
+  // Scrcpy
+  scrcpy: {
+    isAvailable: (): Promise<boolean> => ipcRenderer.invoke('scrcpy:isAvailable'),
+    openLiveView: (serial: string, options?: {
+      maxSize?: number;
+      maxFps?: number;
+      bitRate?: string;
+    }): Promise<boolean> => ipcRenderer.invoke('scrcpy:openLiveView', serial, options),
+    closeLiveView: (serial: string): Promise<boolean> => ipcRenderer.invoke('scrcpy:closeLiveView', serial),
+    isDeviceActive: (serial: string): Promise<boolean> => ipcRenderer.invoke('scrcpy:isDeviceActive', serial),
+    getActiveDevices: (): Promise<string[]> => ipcRenderer.invoke('scrcpy:getActiveDevices'),
+    getActiveCount: (): Promise<number> => ipcRenderer.invoke('scrcpy:getActiveCount'),
+  },
 };

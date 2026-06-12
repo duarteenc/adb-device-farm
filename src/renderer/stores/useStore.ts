@@ -7,6 +7,8 @@ interface AppState {
   logs: LogEntry[];
   isLoading: boolean;
   error: string | null;
+  activeLiveViews: Set<string>;
+  scrcpyAvailable: boolean;
 
   // Actions
   setDevices: (devices: Device[]) => void;
@@ -20,6 +22,10 @@ interface AppState {
   clearLogs: () => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+  setActiveLiveViews: (views: string[]) => void;
+  addActiveLiveView: (serial: string) => void;
+  removeActiveLiveView: (serial: string) => void;
+  setScrcpyAvailable: (available: boolean) => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -28,6 +34,8 @@ export const useStore = create<AppState>((set, get) => ({
   logs: [],
   isLoading: false,
   error: null,
+  activeLiveViews: new Set(),
+  scrcpyAvailable: false,
 
   setDevices: (devices) => set({ devices }),
 
@@ -71,4 +79,20 @@ export const useStore = create<AppState>((set, get) => ({
   setLoading: (loading) => set({ isLoading: loading }),
 
   setError: (error) => set({ error }),
+
+  setActiveLiveViews: (views) => set({ activeLiveViews: new Set(views) }),
+
+  addActiveLiveView: (serial) =>
+    set((state) => ({
+      activeLiveViews: new Set([...state.activeLiveViews, serial]),
+    })),
+
+  removeActiveLiveView: (serial) =>
+    set((state) => {
+      const newSet = new Set(state.activeLiveViews);
+      newSet.delete(serial);
+      return { activeLiveViews: newSet };
+    }),
+
+  setScrcpyAvailable: (available) => set({ scrcpyAvailable: available }),
 }));

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { registerIPCHandlers } from './ipc/handlers';
 import { deviceService } from './device/device.service';
 import { logger } from './logger/logger.service';
+import { scrcpyService } from './scrcpy/scrcpy.service';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -64,6 +65,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   deviceService.stopAutoRefresh();
+  scrcpyService.closeAll();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -72,4 +74,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   logger.info('Application shutting down', undefined, 'Main');
   deviceService.stopAutoRefresh();
+  scrcpyService.closeAll();
 });

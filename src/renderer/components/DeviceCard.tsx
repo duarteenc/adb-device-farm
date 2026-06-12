@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import type { Device } from '@shared/types';
+import { api } from '../utils/api';
+import { useStore } from '../stores/useStore';
 
 interface DeviceCardProps {
   device: Device;
@@ -7,6 +10,41 @@ interface DeviceCardProps {
 }
 
 const DeviceCard = ({ device, isSelected, onToggleSelect }: DeviceCardProps) => {
+  const { activeLiveViews, scrcpyAvailable, addActiveLiveView, removeActiveLiveView } = useStore();
+  const [isOpening, setIsOpening] = useState(false);
+  const isLiveViewActive = activeLiveViews.has(device.serial);
+
+  const handleLiveView = async (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent card selection
+
+    if (isLiveViewActive) {
+      // Close live view
+      const success = await api.scrcpy.closeLiveView(device.serial);
+      if (success) {
+        removeActiveLiveView(device.serial);
+      }
+      return;
+    }
+
+    // Open live view
+    setIsOpening(true);
+    try {
+      const success = await api.scrcpy.openLiveView(device.serial, {
+        maxSize: 1080,
+        maxFps: 30,
+        bitRate: '4M',
+      });
+
+      if (success) {
+        addActiveLiveView(device.serial);
+      }
+    } catch (error) {
+      console.error('Failed to open live view:', error);
+    } finally {
+      setIsOpening(false);
+    }
+  };
+
   const getStatusColor = () => {
     switch (device.status) {
       case 'online':
@@ -112,6 +150,35 @@ const DeviceCard = ({ device, isSelected, onToggleSelect }: DeviceCardProps) => 
           <div className="text-xs text-gray-500">Connection</div>
           <div className="text-sm text-neon-red font-medium uppercase">{device.connectionType}</div>
         </div>
+
+        {/* Live View Button */}
+        {device.status === 'online' && (
+          <div className="pt-3">
+            <button
+              onClick={handleLiveView}
+              disabled={isOpening || !scrcpyAvailable}
+              className={`w-full px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+                isLiveViewActive
+                  ? 'bg-green-600 text-white hover:bg-green-700 shadow-lg'
+                  : 'bg-neon-red text-white hover:bg-neon-red-light shadow-neon-sm hover:shadow-neon-md'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+              title={!scrcpyAvailable ? 'scrcpy not installed' : undefined}
+            >
+              {isOpening ? (
+                '⏳ Opening...'
+              ) : isLiveViewActive ? (
+                '✓ Live View Active'
+              ) : (
+                '📱 Open Live View'
+              )}
+            </button>
+            {!scrcpyAvailable && (
+              <p className="text-xs text-yellow-400 mt-1 text-center">
+                Install scrcpy first
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { deviceService } from '@main/device/device.service';
 import { adbService } from '@main/adb/adb.service';
 import { logger } from '@main/logger/logger.service';
+import { scrcpyService } from '@main/scrcpy/scrcpy.service';
 import type { Device, ADBResult } from '@shared/types';
 
 export function registerIPCHandlers(): void {
@@ -92,6 +93,37 @@ export function registerIPCHandlers(): void {
 
   ipcMain.handle('logs:getByDevice', (_, serial: string) => {
     return logger.getLogsByDevice(serial);
+  });
+
+  // Scrcpy Handlers
+  ipcMain.handle('scrcpy:isAvailable', (): boolean => {
+    return scrcpyService.isAvailable();
+  });
+
+  ipcMain.handle('scrcpy:openLiveView', async (_, serial: string, options?: {
+    maxSize?: number;
+    maxFps?: number;
+    bitRate?: string;
+  }): Promise<boolean> => {
+    logger.info(`Opening live view`, serial, 'IPC');
+    return await scrcpyService.openLiveView(serial, options);
+  });
+
+  ipcMain.handle('scrcpy:closeLiveView', (_, serial: string): boolean => {
+    logger.info(`Closing live view`, serial, 'IPC');
+    return scrcpyService.closeLiveView(serial);
+  });
+
+  ipcMain.handle('scrcpy:isDeviceActive', (_, serial: string): boolean => {
+    return scrcpyService.isDeviceActive(serial);
+  });
+
+  ipcMain.handle('scrcpy:getActiveDevices', (): string[] => {
+    return scrcpyService.getActiveDevices();
+  });
+
+  ipcMain.handle('scrcpy:getActiveCount', (): number => {
+    return scrcpyService.getActiveCount();
   });
 
   logger.info('IPC handlers registered', undefined, 'IPC');

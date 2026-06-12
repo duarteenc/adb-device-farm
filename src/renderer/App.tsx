@@ -8,7 +8,7 @@ import LogPanel from './components/LogPanel';
 import StarryBackground from './components/StarryBackground';
 
 function App() {
-  const { setDevices, addLog, clearLogs, setLoading } = useStore();
+  const { setDevices, addLog, clearLogs, setLoading, setScrcpyAvailable, setActiveLiveViews } = useStore();
 
   useEffect(() => {
     // Initial device discovery
@@ -26,6 +26,14 @@ function App() {
 
     discoverDevices();
 
+    // Check scrcpy availability
+    api.scrcpy.isAvailable().then((available) => {
+      setScrcpyAvailable(available);
+      if (!available) {
+        console.warn('scrcpy is not available. Install from: https://github.com/Genymobile/scrcpy');
+      }
+    });
+
     // Setup log listeners
     api.logs.onNewLog((log) => {
       addLog(log);
@@ -35,11 +43,15 @@ function App() {
       clearLogs();
     });
 
-    // Auto-refresh devices every 5 seconds
+    // Auto-refresh devices and active live views every 5 seconds
     const interval = setInterval(async () => {
       try {
         const devices = await api.devices.getAll();
         setDevices(devices);
+
+        // Update active live views
+        const activeViews = await api.scrcpy.getActiveDevices();
+        setActiveLiveViews(activeViews);
       } catch (error) {
         console.error('Failed to refresh devices:', error);
       }
@@ -53,7 +65,7 @@ function App() {
     return () => {
       clearInterval(interval);
     };
-  }, [addLog, clearLogs, setDevices, setLoading]);
+  }, [addLog, clearLogs, setDevices, setLoading, setScrcpyAvailable, setActiveLiveViews]);
 
   return (
     <div className="relative min-h-screen bg-dark-bg text-white overflow-hidden">
