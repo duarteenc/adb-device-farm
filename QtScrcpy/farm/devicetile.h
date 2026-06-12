@@ -13,16 +13,14 @@ class QWheelEvent;
 class QKeyEvent;
 
 /**
- * One device view in the farm grid: a compact header (number / model / IP / fps)
- * over an OpenGL YUV renderer.
+ * One device view in the farm grid: an OpenGL YUV renderer with the device's
+ * number / model / IP overlaid on top of the screen (GenFarmer-style).
  *
- * Registers itself as a qsc::DeviceObserver so the core delivers decoded frames
- * to onFrame() on the GUI thread (held under the decoder's VideoBuffer lock for
- * the call) -> QYUVOpenGLWidget::updateTextures() -> GPU. No copies.
+ * Registers as a qsc::DeviceObserver so the core delivers decoded frames to
+ * onFrame() on the GUI thread -> QYUVOpenGLWidget::updateTextures() -> GPU.
  *
- * Tiles keep a fixed width (set by FarmWindow's size slider, with a floor) so a
- * phone is always large enough to read; the grid scrolls rather than shrinking
- * tiles below that floor.
+ * Tiles keep a fixed width (size slider, floored) so a phone is always readable;
+ * the grid scrolls rather than shrinking tiles below that floor.
  */
 class DeviceTile
     : public QWidget
@@ -38,7 +36,7 @@ public:
     void setModel(const QString &model);
     void setStatusText(const QString &text);
     void setSelected(bool selected);
-    /** Fix the tile width; height follows a portrait aspect plus the header. */
+    void setUnderControl(bool on);
     void setTileWidth(int width);
 
     QSize videoFrameSize() const;
@@ -51,6 +49,7 @@ public:
 
 signals:
     void clicked(const QString &serial);
+    void doubleClicked(const QString &serial);
     void mouseInput(const QString &serial, QMouseEvent *event);
     void wheelInput(const QString &serial, QWheelEvent *event);
     void keyInput(const QString &serial, QKeyEvent *event);
@@ -60,7 +59,8 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    void refreshHeader();
+    void refreshOverlay();
+    void applyBorder();
 
     QString m_serial;
     QString m_ip;
@@ -69,10 +69,12 @@ private:
     int m_number = 0;
     quint32 m_fps = 0;
     bool m_selected = false;
+    bool m_underControl = false;
     int m_tileWidth = 190;
+    double m_frameAspect = 2.0;    // height/width of the device frame (auto from video)
 
     QYUVOpenGLWidget *m_video = nullptr;
-    QWidget *m_header = nullptr;
+    QWidget *m_overlay = nullptr;     // sits on top of the video, anchored to the top
     QLabel *m_numLabel = nullptr;
     QLabel *m_modelLabel = nullptr;
     QLabel *m_ipLabel = nullptr;

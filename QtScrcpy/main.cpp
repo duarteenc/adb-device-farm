@@ -70,6 +70,11 @@ int main(int argc, char *argv[])
         QApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
     }
 
+    // The farm shows one QOpenGLWidget per device. Share a single GL context
+    // across them instead of letting each create its own — without this,
+    // mirroring dozens of devices at once exhausts GPU contexts and crashes.
+    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
 #if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
 

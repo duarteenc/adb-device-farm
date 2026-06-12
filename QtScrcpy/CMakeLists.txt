@@ -200,6 +200,8 @@ set(QC_FARM_SOURCES
     farm/devicetile.cpp
     farm/farmwindow.h
     farm/farmwindow.cpp
+    farm/focuspanel.h
+    farm/focuspanel.cpp
 )
 source_group(farm FILES ${QC_FARM_SOURCES})
 

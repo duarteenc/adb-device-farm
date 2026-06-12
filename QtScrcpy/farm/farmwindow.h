@@ -11,6 +11,7 @@
 #include "adbprocess.h"
 
 class DeviceTile;
+class FocusPanel;
 class QGridLayout;
 class QLabel;
 class QLineEdit;
@@ -38,6 +39,7 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void refreshDevices();
@@ -46,6 +48,7 @@ private slots:
     void connectWifi();
     void enableWifiSelected();
     void setTileSize(int width);
+    void setHostSize(int height);
     void setQuality(int maxSize);
     void setFrameRate(int fps);
     void setGroupMode(bool on);
@@ -54,6 +57,7 @@ private slots:
                            const QSize &size);
     void onDeviceDisconnected(const QString &serial);
     void onTileClicked(const QString &serial);
+    void onTileDoubleClicked(const QString &serial);
     void onTileMouse(const QString &serial, QMouseEvent *event);
     void onTileWheel(const QString &serial, QWheelEvent *event);
     void onTileKey(const QString &serial, QKeyEvent *event);
@@ -77,19 +81,23 @@ private:
     QStringList m_pending;             // serials waiting to connect
     QSet<QString> m_connecting;        // serials currently establishing
     QString m_selected;
+    QString m_focusSerial;             // device shown in the embedded host panel
     QString m_wifiSerial;
     bool m_groupMode = false;
     int m_portSeq = 0;                 // hands out a unique reverse port per device
 
     QGridLayout *m_grid = nullptr;
     QScrollArea *m_scroll = nullptr;
+    FocusPanel *m_focusPanel = nullptr;
     QLabel *m_statusBar = nullptr;
     QLineEdit *m_ipEdit = nullptr;
     QLabel *m_tileSizeValue = nullptr;
+    QLabel *m_hostSizeValue = nullptr;
     QLabel *m_qualityValue = nullptr;
     QLabel *m_fpsValue = nullptr;
 
     int m_tileWidth = 190;        // current grid tile width (slider, floor enforced)
+    int m_hostHeight = 720;       // host panel target phone height (slider)
 
     // Low-latency DeviceParams template.
     quint16 m_maxSize = 800;

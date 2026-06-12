@@ -24,6 +24,7 @@
 #include <QWheelEvent>
 
 #include "devicetile.h"
+#include "focuspanel.h"
 
 namespace {
 constexpr int kGridSpacing = 10;
@@ -47,11 +48,11 @@ QScrollArea, #gridHost { border:none; background:#0b0f17; }
 QSlider::groove:horizontal { height:4px; background:#2a344a; border-radius:2px; }
 QSlider::handle:horizontal { width:14px; margin:-6px 0; border-radius:7px; background:#3b82f6; }
 QSlider::sub-page:horizontal { background:#2563eb; border-radius:2px; }
-#tileHeader { background:#0b0f17; }
-#tileNum { color:#e2e8f0; font-size:15px; font-weight:bold; }
-#tileModel { color:#cbd5e1; font-size:11px; }
-#tileIp { color:#7c8aa0; font-size:10px; }
-#tileFps { color:#7c8aa0; font-size:10px; }
+#tileOverlay { background: transparent; }
+#tileNum { background: transparent; color:#ffffff; font-size:16px; font-weight:bold; }
+#tileModel { background: transparent; color:#f1f5f9; font-size:11px; font-weight:bold; }
+#tileIp { background: transparent; color:#dbe4f0; font-size:10px; }
+#tileFps { background: transparent; color:#dbe4f0; font-size:9px; }
 )";
 }
 
@@ -71,11 +72,24 @@ FarmWindow::FarmWindow(QWidget *parent)
     m_scroll = new QScrollArea(this);
     m_scroll->setWidgetResizable(true);
     m_scroll->setWidget(gridHost);
+    m_scroll->viewport()->installEventFilter(this);    // relayout when grid width changes
+
+    m_focusPanel = new FocusPanel(this);
+    m_focusPanel->hide();
+    connect(m_focusPanel, &FocusPanel::closed, this, [this](const QString &s) {
+        if (m_tiles.contains(s)) {
+            m_tiles[s]->setUnderControl(false);
+        }
+        m_focusSerial.clear();
+        m_focusPanel->hide();
+        relayout();
+    });
 
     auto *root = new QHBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
     root->addWidget(buildControlPanel(), 0);
+    root->addWidget(m_focusPanel, 0);
     root->addWidget(m_scroll, 1);
 
     connect(&qsc::IDeviceManage::getInstance(), &qsc::IDeviceManage::deviceConnected, this,
@@ -127,10 +141,12 @@ QWidget *FarmWindow::buildControlPanel()
     };
 
     auto tileRow = makeSlider(tr("Tile size"), kMinTileWidth, 360, m_tileWidth, &m_tileSizeValue);
+    auto hostRow = makeSlider(tr("Host screen"), 480, 1240, m_hostHeight, &m_hostSizeValue);
     auto qualityRow = makeSlider(tr("Quality (px)"), 320, 1280, static_cast<int>(m_maxSize), &m_qualityValue);
     auto fpsRow = makeSlider(tr("Frame rate"), 15, 60, static_cast<int>(m_maxFps), &m_fpsValue);
 
     connect(tileRow.second, &QSlider::valueChanged, this, &FarmWindow::setTileSize);
+    connect(hostRow.second, &QSlider::valueChanged, this, &FarmWindow::setHostSize);
     connect(qualityRow.second, &QSlider::valueChanged, this, &FarmWindow::setQuality);
     connect(fpsRow.second, &QSlider::valueChanged, this, &FarmWindow::setFrameRate);
 
@@ -162,6 +178,7 @@ QWidget *FarmWindow::buildControlPanel()
     col->addWidget(stopAllBtn);
     col->addWidget(sep());
     col->addLayout(tileRow.first);
+    col->addLayout(hostRow.first);
     col->addLayout(qualityRow.first);
     col->addLayout(fpsRow.first);
     col->addWidget(new QLabel(tr("Quality/FPS apply on next Mirror All."), panel));
@@ -191,6 +208,16 @@ void FarmWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     relayout();
+}
+
+bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    // The grid's available width changes when the host panel shows/hides or the
+    // window resizes; reflow the columns whenever the viewport is resized.
+    if (m_scroll && watched == m_scroll->viewport() && event->type() == QEvent::Resize) {
+        relayout();
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void FarmWindow::refreshDevices()
@@ -376,6 +403,11 @@ void FarmWindow::onDeviceDisconnected(const QString &serial)
     if (device && tile) {
         device->deRegisterDeviceObserver(tile);
     }
+    if (m_focusSerial == serial) {
+        m_focusPanel->detach();
+        m_focusPanel->hide();
+        m_focusSerial.clear();
+    }
     m_connecting.remove(serial);
     removeTile(serial);
     pumpConnectQueue();
@@ -390,6 +422,25 @@ void FarmWindow::onTileClicked(const QString &serial)
     if (m_tiles.contains(serial)) {
         m_tiles[serial]->setSelected(true);
     }
+}
+
+void FarmWindow::onTileDoubleClicked(const QString &serial)
+{
+    if (!qsc::IDeviceManage::getInstance().getDevice(serial)) {
+        return;    // not connected yet
+    }
+    // Move the "under control" marker to the new device.
+    if (!m_focusSerial.isEmpty() && m_focusSerial != serial && m_tiles.contains(m_focusSerial)) {
+        m_tiles[m_focusSerial]->setUnderControl(false);
+    }
+    m_focusSerial = serial;
+
+    m_focusPanel->showDevice(serial, serial);
+    m_focusPanel->setVisible(true);
+    if (DeviceTile *tile = m_tiles.value(serial, nullptr)) {
+        tile->setUnderControl(true);
+    }
+    relayout();
 }
 
 QList<QString> FarmWindow::inputTargets(const QString &sourceSerial) const
@@ -474,6 +525,15 @@ void FarmWindow::setTileSize(int width)
     relayout();
 }
 
+void FarmWindow::setHostSize(int height)
+{
+    m_hostHeight = height;
+    m_hostSizeValue->setText(QString::number(height));
+    if (m_focusPanel) {
+        m_focusPanel->setHostHeight(height);    // panel resizes; grid reflows via viewport filter
+    }
+}
+
 void FarmWindow::setQuality(int maxSize)
 {
     m_maxSize = static_cast<quint16>(maxSize);
@@ -503,6 +563,7 @@ DeviceTile *FarmWindow::ensureTile(const QString &serial)
     auto *tile = new DeviceTile(serial);
     tile->setTileWidth(m_tileWidth);
     connect(tile, &DeviceTile::clicked, this, &FarmWindow::onTileClicked);
+    connect(tile, &DeviceTile::doubleClicked, this, &FarmWindow::onTileDoubleClicked);
     connect(tile, &DeviceTile::mouseInput, this, &FarmWindow::onTileMouse);
     connect(tile, &DeviceTile::wheelInput, this, &FarmWindow::onTileWheel);
     connect(tile, &DeviceTile::keyInput, this, &FarmWindow::onTileKey);
