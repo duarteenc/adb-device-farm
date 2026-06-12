@@ -1,26 +1,19 @@
 import { useEffect } from 'react';
 import { useStore } from './stores/useStore';
 import { api } from './utils/api';
-import Header from './components/Header';
-import ScreenWall from './components/ScreenWall';
-import ActionPanel from './components/ActionPanel';
-import LogPanel from './components/LogPanel';
-import StarryBackground from './components/StarryBackground';
+import MinimalScreenWall from './components/MinimalScreenWall';
 
 function App() {
-  const { setDevices, addLog, clearLogs, setLoading, setScrcpyAvailable, setActiveLiveViews } = useStore();
+  const { setDevices, addLog, clearLogs, setScrcpyAvailable, setActiveLiveViews } = useStore();
 
   useEffect(() => {
     // Initial device discovery
     const discoverDevices = async () => {
-      setLoading(true);
       try {
         const devices = await api.devices.discover();
         setDevices(devices);
       } catch (error) {
         console.error('Failed to discover devices:', error);
-      } finally {
-        setLoading(false);
       }
     };
 
@@ -65,24 +58,11 @@ function App() {
     return () => {
       clearInterval(interval);
     };
-  }, [addLog, clearLogs, setDevices, setLoading, setScrcpyAvailable, setActiveLiveViews]);
+  }, [addLog, clearLogs, setDevices, setScrcpyAvailable, setActiveLiveViews]);
 
   return (
-    <div className="relative min-h-screen bg-dark-bg text-white overflow-hidden">
-      <StarryBackground />
-
-      <div className="relative z-10">
-        <Header />
-
-        <main className="container mx-auto px-6 py-6 space-y-6">
-          <ScreenWall />
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <ActionPanel />
-            <LogPanel />
-          </div>
-        </main>
-      </div>
+    <div className="bg-black text-white h-screen overflow-hidden">
+      <MinimalScreenWall />
     </div>
   );
 }
