@@ -17,7 +17,10 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['electron']
+              external: ['electron'],
+              output: {
+                entryFileNames: 'main.js'
+              }
             }
           },
           resolve: {
