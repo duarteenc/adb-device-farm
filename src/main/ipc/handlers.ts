@@ -3,6 +3,7 @@ import { deviceService } from '@main/device/device.service';
 import { adbService } from '@main/adb/adb.service';
 import { logger } from '@main/logger/logger.service';
 import { scrcpyService } from '@main/scrcpy/scrcpy.service';
+import { screenshotService } from '@main/screenshot/screenshot.service';
 import type { Device, ADBResult } from '@shared/types';
 
 export function registerIPCHandlers(): void {
@@ -124,6 +125,27 @@ export function registerIPCHandlers(): void {
 
   ipcMain.handle('scrcpy:getActiveCount', (): number => {
     return scrcpyService.getActiveCount();
+  });
+
+  // Screenshot Handlers
+  ipcMain.handle('screenshot:capture', async (_, serial: string): Promise<string | null> => {
+    return await screenshotService.captureScreenshot(serial);
+  });
+
+  ipcMain.handle('screenshot:getCached', async (_, serial: string): Promise<string | null> => {
+    return await screenshotService.getCachedScreenshot(serial);
+  });
+
+  ipcMain.handle('screenshot:startAutoCapture', (_, serial: string, intervalMs?: number): void => {
+    screenshotService.startAutoCapture(serial, intervalMs);
+  });
+
+  ipcMain.handle('screenshot:stopAutoCapture', (_, serial: string): void => {
+    screenshotService.stopAutoCapture(serial);
+  });
+
+  ipcMain.handle('screenshot:getActiveCaptures', (): string[] => {
+    return screenshotService.getActiveAutoCaptures();
   });
 
   logger.info('IPC handlers registered', undefined, 'IPC');

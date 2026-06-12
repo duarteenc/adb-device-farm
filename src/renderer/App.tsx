@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useStore } from './stores/useStore';
 import { api } from './utils/api';
 import Header from './components/Header';
-import DeviceGrid from './components/DeviceGrid';
+import ScreenWall from './components/ScreenWall';
 import ActionPanel from './components/ActionPanel';
 import LogPanel from './components/LogPanel';
 import StarryBackground from './components/StarryBackground';
@@ -75,7 +75,7 @@ function App() {
         <Header />
 
         <main className="container mx-auto px-6 py-6 space-y-6">
-          <DeviceGrid />
+          <ScreenWall />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <ActionPanel />

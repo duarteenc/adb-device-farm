@@ -72,4 +72,13 @@ export const api = {
     getActiveDevices: (): Promise<string[]> => ipcRenderer.invoke('scrcpy:getActiveDevices'),
     getActiveCount: (): Promise<number> => ipcRenderer.invoke('scrcpy:getActiveCount'),
   },
+
+  // Screenshot
+  screenshot: {
+    capture: (serial: string): Promise<string | null> => ipcRenderer.invoke('screenshot:capture', serial),
+    getCached: (serial: string): Promise<string | null> => ipcRenderer.invoke('screenshot:getCached', serial),
+    startAutoCapture: (serial: string, intervalMs?: number): Promise<void> => ipcRenderer.invoke('screenshot:startAutoCapture', serial, intervalMs),
+    stopAutoCapture: (serial: string): Promise<void> => ipcRenderer.invoke('screenshot:stopAutoCapture', serial),
+    getActiveCaptures: (): Promise<string[]> => ipcRenderer.invoke('screenshot:getActiveCaptures'),
+  },
 };
