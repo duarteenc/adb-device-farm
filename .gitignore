@@ -1,0 +1,76 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+dist-electron/
+out/
+build/
+release/
+
+# Electron specific
+*.asar
+app-update.yml
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.development
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# APK files (pueden ser muy pesados)
+*.apk
+
+# Screenshots y recordings capturados
+screenshots/
+recordings/
+
+# Credentials y tokens
+credentials.json
+tokens.json
+secrets/
+
+# Device specific data
+devices.json
+device-cache/
+
+# Macro/automation data (pueden contener info sensible)
+macros/*.private.json
+
+# TypeScript
+*.tsbuildinfo
+
+# Package managers
+.yarn/
+.pnpm-store/
