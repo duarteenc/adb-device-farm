@@ -1,8 +1,12 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { registerIPCHandlers } from './ipc/handlers';
 import { deviceService } from './device/device.service';
 import { logger } from './logger/logger.service';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 
