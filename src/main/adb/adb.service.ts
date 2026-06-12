@@ -5,7 +5,7 @@ import type { ADBCommand, ADBResult } from '@shared/types';
 const execAsync = promisify(exec);
 
 export class ADBService {
-  private adbPath: string = 'adb';
+  private adbPath: string = 'C:\\platform-tools\\adb.exe';
 
   constructor() {
     this.detectADB();
