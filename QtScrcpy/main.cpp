@@ -1,9 +1,9 @@
 ﻿#include <QApplication>
 #include <QDebug>
 #include <QFile>
+#include <QIcon>
 #ifdef Q_OS_LINUX
 #include <QFileInfo>
-#include <QIcon>
 #endif
 #include <QSurfaceFormat>
 #include <QTcpServer>
@@ -99,14 +99,8 @@ int main(int argc, char *argv[])
     g_oldMessageHandler = qInstallMessageHandler(myMessageOutput);
     QApplication a(argc, argv);
 
-    // Set application icon for Linux (taskbar icon)
-#ifdef Q_OS_LINUX
-    // Load icon from Qt resource (logo.png is included in res.qrc)
-    QIcon appIcon(":/image/tray/logo.png");
-    if (!appIcon.isNull()) {
-        a.setWindowIcon(appIcon);
-    }
-#endif
+    // Application icon (title bar / taskbar) for all platforms.
+    a.setWindowIcon(QIcon(":/QtScrcpy.ico"));
 
     // windows下通过qmake VERSION变量或者rc设置版本号和应用名称后，这里可以直接拿到
     // mac下拿到的是CFBundleVersion的值
