@@ -13,6 +13,7 @@
 
 #include "config.h"
 #include "dialog.h"
+#include "farmwindow.h"
 #include "mousetap/mousetap.h"
 
 static Dialog *g_mainDlg = Q_NULLPTR;
@@ -130,6 +131,19 @@ int main(int argc, char *argv[])
     }
 
     qsc::AdbProcess::setAdbPath(Config::getInstance().getAdbPath());
+
+    // v2.0 device-farm dashboard (opt-in via the --farm flag).
+    if (a.arguments().contains("--farm")) {
+        auto *farm = new FarmWindow();
+        farm->resize(1280, 820);
+        farm->showMaximized();
+        int farmRet = a.exec();
+        delete farm;
+#if defined(Q_OS_WIN32) || defined(Q_OS_OSX)
+        MouseTap::getInstance()->quitMouseEventTap();
+#endif
+        return farmRet;
+    }
 
     g_mainDlg = new Dialog {};
     g_mainDlg->show();

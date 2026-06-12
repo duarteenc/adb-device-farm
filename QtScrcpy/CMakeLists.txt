@@ -194,6 +194,15 @@ set(QC_GROUP_CONTROLLER
 )
 source_group(groupcontroller FILES ${QC_GROUP_CONTROLLER})
 
+# farm (v2.0 device-farm dashboard)
+set(QC_FARM_SOURCES
+    farm/devicetile.h
+    farm/devicetile.cpp
+    farm/farmwindow.h
+    farm/farmwindow.cpp
+)
+source_group(farm FILES ${QC_FARM_SOURCES})
+
 # util
 set(QC_UTIL_SOURCES
     util/config.h
@@ -265,6 +274,7 @@ set(QC_PROJECT_SOURCES
     ${QC_UTIL_SOURCES}
     ${QC_MAIN_SOURCES}
     ${QC_GROUP_CONTROLLER}
+    ${QC_FARM_SOURCES}
     ${QC_PLANTFORM_SOURCES}
     ${QC_AUDIO_SOURCES}
 )
@@ -293,6 +303,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE util)
 target_include_directories(${PROJECT_NAME} PRIVATE uibase)
 target_include_directories(${PROJECT_NAME} PRIVATE ui)
 target_include_directories(${PROJECT_NAME} PRIVATE render)
+target_include_directories(${PROJECT_NAME} PRIVATE farm)
 
 # output dir
 # https://cmake.org/cmake/help/latest/prop_gbl/GENERATOR_IS_MULTI_CONFIG.html
