@@ -326,6 +326,32 @@ void FarmWindow::rebuildNumbering()
     for (const QString &s : sorted) {
         m_numbering.insert(s, n++);
     }
+
+    // Create placeholder tiles for ALL available devices (GenFarmer style)
+    // This reserves their positions even before they connect
+    for (const QString &serial : sorted) {
+        if (!m_tiles.contains(serial)) {
+            auto *tile = new DeviceTile(serial);
+            tile->setTileWidth(m_tileWidth);
+            tile->setNumber(m_numbering.value(serial, 0));
+            tile->setControllable(m_smallViewControl);
+            // Set placeholder state - show IP but waiting for connection
+            tile->setModel("...");  // Placeholder text
+            tile->setStatusText("waiting");
+
+            // Connect signals (needed when placeholder becomes active)
+            connect(tile, &DeviceTile::mouseInput, this, &FarmWindow::onTileMouse);
+            connect(tile, &DeviceTile::wheelInput, this, &FarmWindow::onTileWheel);
+            connect(tile, &DeviceTile::keyInput, this, &FarmWindow::onTileKey);
+            connect(tile, &DeviceTile::doubleClicked, this, &FarmWindow::onTileDoubleClicked);
+
+            m_tiles.insert(serial, tile);
+        }
+    }
+
+    // Rebuild m_order from scratch using ALL sorted devices
+    m_order = sorted;
+    relayout();
 }
 
 void FarmWindow::rebuildSelector()
@@ -463,7 +489,8 @@ void FarmWindow::mirrorSelected()
         return;
     }
     for (const QString &serial : m_selectedSerials) {
-        if (m_available.contains(serial) && !m_tiles.contains(serial)
+        bool alreadyConnected = qsc::IDeviceManage::getInstance().getDevice(serial) != nullptr;
+        if (m_available.contains(serial) && !alreadyConnected
             && !m_connecting.contains(serial) && !m_pending.contains(serial)) {
             m_pending.append(serial);
         }
@@ -651,11 +678,11 @@ void FarmWindow::mirrorAll()
         m_statusBar->setText(tr("No devices — press Refresh first."));
         return;
     }
-    // Queue every not-yet-connected device; the pump drains the queue with a
-    // bounded number of simultaneous setups.
+    // Queue every device that hasn't started connecting yet
+    // (tiles may exist as placeholders, so check if already connected via IDeviceManage)
     for (const QString &serial : m_available) {
-        if (!m_tiles.contains(serial) && !m_connecting.contains(serial)
-            && !m_pending.contains(serial)) {
+        bool alreadyConnected = qsc::IDeviceManage::getInstance().getDevice(serial) != nullptr;
+        if (!alreadyConnected && !m_connecting.contains(serial) && !m_pending.contains(serial)) {
             m_pending.append(serial);
         }
     }
@@ -673,7 +700,9 @@ void FarmWindow::pumpConnectQueue()
 {
     while (m_connecting.size() < kMaxConcurrent && !m_pending.isEmpty()) {
         const QString serial = m_pending.takeFirst();
-        if (m_tiles.contains(serial) || m_connecting.contains(serial)) {
+        // Skip if already connected (not just if placeholder exists)
+        bool alreadyConnected = qsc::IDeviceManage::getInstance().getDevice(serial) != nullptr;
+        if (alreadyConnected || m_connecting.contains(serial)) {
             continue;
         }
         m_connecting.insert(serial);
@@ -823,6 +852,10 @@ void FarmWindow::onDeviceConnected(bool success, const QString &serial, const QS
         device->setUserData(static_cast<void *>(tile));
         device->registerDeviceObserver(tile);
     }
+
+    // Re-sort tiles after connection to maintain numerical order
+    rebuildNumbering();
+
     updateSelectorStyles();    // mark this device as mirroring in the selector
     pumpConnectQueue();    // a slot just freed up; start the next queued device
 }
