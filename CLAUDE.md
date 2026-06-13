@@ -78,65 +78,28 @@ process is still alive (a crash/`LNK`/missing-DLL exits immediately).
   `FarmWindow::startConnect`) or simultaneous connections collide on port 27183.
 - Commit messages end with the Co-Authored-By trailer; commit/push only when asked.
 
-## Working with multiple Claude Code instances (Git Worktrees)
+## Branches & worktrees
 
-**Problem:** When running 2 Claude Code instances on this project, they share the same `build/` and `output/` directories. If both compile, they overwrite each other's executables.
+- **`main` is the canonical branch** (the v2.0 device farm). The old v1 Electron app
+  lives only on `origin/develop` / `origin/feature/live-device-viewer`.
+- Do feature/fix work on a short-lived branch, ideally in its **own git worktree** so a
+  second instance doesn't clobber the shared `build/` and `output/` dirs:
 
-**Solution:** Use git worktrees. Each worktree is a separate working directory with its own `build/` and `output/`.
-
-### Current setup on this machine
-
-```
-C:\adb-device-farm\          <- Primary worktree (main branch)
-C:\adb-device-farm-feature\  <- Secondary worktree (feature/small-view-control-toggle)
-```
-
-View all worktrees:
 ```bash
-git worktree list
+# create an isolated worktree + branch off main
+git worktree add ../adb-device-farm-<name> -b fix/<name> main
 ```
 
-### How to use (specific to this machine)
+Each worktree builds/runs independently (own `build/`, `output/`) with the same
+`scripts\build.bat`. Kill `QtScrcpy.exe` before building (the running exe locks it).
 
-When opening Claude Code, specify which directory:
-- **Claude #1**: Open in `C:\adb-device-farm` (works on main or new feature branches)
-- **Claude #2**: Open in `C:\adb-device-farm-feature` (works on feature/small-view-control-toggle)
+- When the work is **merged into `main`, clean it up** — leave no stale worktrees/branches:
 
-Each can build and run independently:
-
-**In C:\adb-device-farm:**
-```powershell
-Get-Process QtScrcpy -ErrorAction SilentlyContinue | Stop-Process -Force
-& cmd /c "C:\adb-device-farm\scripts\build.bat"
-Start-Process "C:\adb-device-farm\output\x64\RelWithDebInfo\QtScrcpy.exe" -ArgumentList "--farm" -WorkingDirectory "C:\adb-device-farm\output\x64\RelWithDebInfo"
-```
-
-**In C:\adb-device-farm-feature:**
-```powershell
-Get-Process QtScrcpy -ErrorAction SilentlyContinue | Stop-Process -Force
-& cmd /c "C:\adb-device-farm-feature\scripts\build.bat"
-Start-Process "C:\adb-device-farm-feature\output\x64\RelWithDebInfo\QtScrcpy.exe" -ArgumentList "--farm" -WorkingDirectory "C:\adb-device-farm-feature\output\x64\RelWithDebInfo"
-```
-
-Both can compile and run at the same time without conflicts.
-
-### Managing worktrees
-
-Create a new worktree for another feature:
 ```bash
-cd C:\adb-device-farm
-git worktree add ..\adb-device-farm-ui feature/ui-improvements
+git worktree remove --force ../adb-device-farm-<name>
+git branch -d fix/<name>                       # local
+git push origin --delete fix/<name>            # remote
 ```
 
-Remove a worktree when done:
-```bash
-git worktree remove ..\adb-device-farm-feature
-```
-
-List all worktrees:
-```bash
-git worktree list
-# Output shows:
-# C:/adb-device-farm          <hash> [main]
-# C:/adb-device-farm-feature  <hash> [feature/small-view-control-toggle]
-```
+Check state anytime with `git worktree list` and `git branch -a`. If a feature is
+finished and pushed/merged, remove its worktree and delete the branch (local + remote).
