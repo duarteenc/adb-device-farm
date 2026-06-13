@@ -155,6 +155,22 @@ void VideoBuffer::peekRenderedFrame(std::function<void(int width, int height, ui
     delete [] rgbBuffer;
 }
 
+void VideoBuffer::peekRenderedYUV(
+    std::function<void(int, int, uint8_t*, uint8_t*, uint8_t*, int, int, int)> onFrame)
+{
+    if (!onFrame) {
+        return;
+    }
+    lock();
+    AVFrame *frame = m_renderingframe;
+    // Only replay if a real frame has been decoded at least once.
+    if (frame && frame->width > 0 && frame->height > 0 && frame->data[0]) {
+        onFrame(frame->width, frame->height, frame->data[0], frame->data[1], frame->data[2],
+                frame->linesize[0], frame->linesize[1], frame->linesize[2]);
+    }
+    unLock();
+}
+
 void VideoBuffer::interrupt()
 {
     if (m_renderExpiredFrames) {

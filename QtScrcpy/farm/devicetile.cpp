@@ -17,12 +17,14 @@ DeviceTile::DeviceTile(const QString &serial, QWidget *parent)
     , m_statusText(tr("connecting…"))
 {
     setAttribute(Qt::WA_StyledBackground, true);
+    // Grid tiles are for display + marquee selection; mouse passes through to the
+    // grid background so it can drive rubber-band selection. Control is via host.
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
     m_ip = serial.contains(':') ? serial.left(serial.indexOf(':')) : serial;
 
     // --- Video ---
     m_video = new QYUVOpenGLWidget(this);
-    m_video->setFocusPolicy(Qt::StrongFocus);
-    m_video->installEventFilter(this);
+    m_video->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
     // --- Overlay (number / model / ip) drawn on top of the screen ---
     m_overlay = new QWidget(m_video);

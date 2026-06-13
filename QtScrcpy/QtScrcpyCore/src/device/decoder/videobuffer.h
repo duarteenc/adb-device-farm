@@ -38,6 +38,14 @@ public:
 
     void peekRenderedFrame(std::function<void(int width, int height, uint8_t* dataRGB32)> onFrame);
 
+    // Deliver the last rendered frame as YUV planes (no conversion), so a newly
+    // attached observer can paint immediately instead of staying black until the
+    // device's screen next changes. The callback runs while the buffer is locked.
+    void peekRenderedYUV(
+        std::function<void(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV,
+                           int linesizeY, int linesizeU, int linesizeV)>
+            onFrame);
+
     // wake up and avoid any blocking call
     void interrupt();
 

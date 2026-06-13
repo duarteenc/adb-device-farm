@@ -89,6 +89,9 @@ public:
     virtual void* getUserData() = 0;
     virtual void registerDeviceObserver(DeviceObserver* observer) = 0;
     virtual void deRegisterDeviceObserver(DeviceObserver* observer) = 0;
+    // Re-deliver the last decoded frame to an observer (so a just-attached view
+    // paints immediately instead of staying black until the screen next changes).
+    virtual void replayLastFrame(DeviceObserver* observer) = 0;
 
     virtual bool connectDevice() = 0;
     virtual void disconnectDevice() = 0;

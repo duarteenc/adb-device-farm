@@ -11,6 +11,7 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -18,7 +19,9 @@
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QResizeEvent>
+#include <QRubberBand>
 #include <QScrollArea>
+#include <QSettings>
 #include <QSlider>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -37,7 +40,7 @@ const char *kStyle = R"(
 QWidget { background:#0b0f17; color:#e2e8f0; font-size:12px; }
 #controlPanel { background:#121826; border-right:1px solid #1e2636; }
 #panelTitle { font-size:16px; font-weight:bold; padding:2px 0 8px 0; }
-QPushButton { background:#1c2436; border:1px solid #2a344a; border-radius:5px; padding:6px 10px; }
+QPushButton { background:transparent; border:1px solid #2a344a; border-radius:5px; padding:6px 10px; }
 QPushButton:hover { background:#26314a; }
 QPushButton#primary { background:#2563eb; border:none; }
 QPushButton#primary:hover { background:#3b82f6; }
@@ -61,17 +64,23 @@ FarmWindow::FarmWindow(QWidget *parent)
 {
     setWindowTitle(tr("ADB Device Farm — v2.0"));
     setStyleSheet(QString::fromUtf8(kStyle));
+    loadGroups();
 
     // --- Scrollable grid (right) ---
-    auto *gridHost = new QWidget;
-    gridHost->setObjectName("gridHost");
-    m_grid = new QGridLayout(gridHost);
+    m_gridHost = new QWidget;
+    m_gridHost->setObjectName("gridHost");
+    m_grid = new QGridLayout(m_gridHost);
     m_grid->setContentsMargins(kGridMargin, kGridMargin, kGridMargin, kGridMargin);
     m_grid->setSpacing(kGridSpacing);
 
+    // Marquee selection: tiles are mouse-transparent (see DeviceTile), so the
+    // grid background receives press/drag to draw a selection rubber band.
+    m_gridHost->installEventFilter(this);
+    m_rubberBand = new QRubberBand(QRubberBand::Rectangle, m_gridHost);
+
     m_scroll = new QScrollArea(this);
     m_scroll->setWidgetResizable(true);
-    m_scroll->setWidget(gridHost);
+    m_scroll->setWidget(m_gridHost);
     m_scroll->viewport()->installEventFilter(this);    // relayout when grid width changes
 
     m_focusPanel = new FocusPanel(this);
@@ -186,6 +195,8 @@ QWidget *FarmWindow::buildControlPanel()
     col->addWidget(sep());
     col->addWidget(groupCheck);
     col->addWidget(sep());
+    col->addWidget(buildSelectorSection());
+    col->addWidget(sep());
     col->addWidget(new QLabel(tr("WiFi connect"), panel));
     col->addWidget(m_ipEdit);
     col->addWidget(connectBtn);
@@ -201,7 +212,329 @@ QWidget *FarmWindow::buildControlPanel()
     connect(enableWifiBtn, &QPushButton::clicked, this, &FarmWindow::enableWifiSelected);
     connect(groupCheck, &QCheckBox::toggled, this, &FarmWindow::setGroupMode);
 
-    return panel;
+    // Make the (potentially tall) panel scroll instead of clipping.
+    auto *panelScroll = new QScrollArea(this);
+    panelScroll->setWidgetResizable(true);
+    panelScroll->setFixedWidth(256);
+    panelScroll->setFrameShape(QFrame::NoFrame);
+    panelScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    panelScroll->setWidget(panel);
+    return panelScroll;
+}
+
+QWidget *FarmWindow::buildSelectorSection()
+{
+    auto *w = new QWidget;
+    auto *v = new QVBoxLayout(w);
+    v->setContentsMargins(0, 0, 0, 0);
+    v->setSpacing(6);
+
+    auto *devLabel = new QLabel(tr("Devices"), w);
+    devLabel->setStyleSheet("font-weight:bold;");
+    v->addWidget(devLabel);
+
+    auto *selAllBtn = new QPushButton(tr("Select all"), w);
+    auto *clearBtn = new QPushButton(tr("Clear"), w);
+    auto *selRow = new QHBoxLayout();
+    selRow->addWidget(selAllBtn);
+    selRow->addWidget(clearBtn);
+    v->addLayout(selRow);
+
+    auto *mirrorSelBtn = new QPushButton(tr("Mirror selected"), w);
+    mirrorSelBtn->setObjectName("primary");
+    v->addWidget(mirrorSelBtn);
+
+    auto *hint = new QLabel(tr("Drag on the grid to select. Control via the host."), w);
+    hint->setObjectName("hint");
+    hint->setWordWrap(true);
+    v->addWidget(hint);
+
+    auto *gridHost = new QWidget(w);
+    m_selectorGrid = new QGridLayout(gridHost);
+    m_selectorGrid->setContentsMargins(0, 0, 0, 0);
+    m_selectorGrid->setSpacing(4);
+    m_selectorGrid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    auto *gridScroll = new QScrollArea(w);
+    gridScroll->setWidgetResizable(true);
+    gridScroll->setFixedHeight(150);
+    gridScroll->setFrameShape(QFrame::NoFrame);
+    gridScroll->setWidget(gridHost);
+    v->addWidget(gridScroll);
+
+    auto *grpLabel = new QLabel(tr("Groups"), w);
+    grpLabel->setStyleSheet("font-weight:bold;");
+    auto *addGrpBtn = new QPushButton(tr("+"), w);
+    addGrpBtn->setFixedWidth(28);
+    auto *grpRow = new QHBoxLayout();
+    grpRow->addWidget(grpLabel, 1);
+    grpRow->addWidget(addGrpBtn, 0);
+    v->addLayout(grpRow);
+
+    auto *groupsHost = new QWidget(w);
+    m_groupsLayout = new QVBoxLayout(groupsHost);
+    m_groupsLayout->setContentsMargins(0, 0, 0, 0);
+    m_groupsLayout->setSpacing(4);
+    v->addWidget(groupsHost);
+
+    connect(selAllBtn, &QPushButton::clicked, this, &FarmWindow::selectAllDevices);
+    connect(clearBtn, &QPushButton::clicked, this, &FarmWindow::clearDeviceSelection);
+    connect(mirrorSelBtn, &QPushButton::clicked, this, &FarmWindow::mirrorSelected);
+    connect(addGrpBtn, &QPushButton::clicked, this, &FarmWindow::createGroup);
+
+    rebuildGroups();
+    return w;
+}
+
+void FarmWindow::rebuildNumbering()
+{
+    auto lastOctet = [](const QString &s) {
+        return s.section(':', 0, 0).section('.', -1).toInt();
+    };
+    QStringList sorted = m_available;
+    std::sort(sorted.begin(), sorted.end(),
+              [&](const QString &a, const QString &b) { return lastOctet(a) < lastOctet(b); });
+    m_numbering.clear();
+    int n = 1;
+    for (const QString &s : sorted) {
+        m_numbering.insert(s, n++);
+    }
+}
+
+void FarmWindow::rebuildSelector()
+{
+    if (!m_selectorGrid) {
+        return;
+    }
+    while (QLayoutItem *item = m_selectorGrid->takeAt(0)) {
+        if (item->widget()) {
+            item->widget()->deleteLater();
+        }
+        delete item;
+    }
+    m_selectorButtons.clear();
+
+    QList<QString> serials = m_numbering.keys();
+    std::sort(serials.begin(), serials.end(),
+              [this](const QString &a, const QString &b) { return m_numbering[a] < m_numbering[b]; });
+
+    const int cols = 5;
+    int i = 0;
+    for (const QString &s : serials) {
+        auto *b = new QPushButton(QString::number(m_numbering[s]));
+        b->setCheckable(true);
+        b->setFixedSize(40, 28);
+        b->setToolTip(s.section(':', 0, 0));
+        connect(b, &QPushButton::clicked, this, [this, s] { toggleSelection(s); });
+        m_selectorGrid->addWidget(b, i / cols, i % cols);
+        m_selectorButtons.insert(s, b);
+        ++i;
+    }
+    updateSelectorStyles();
+}
+
+void FarmWindow::updateSelectorStyles()
+{
+    for (auto it = m_selectorButtons.begin(); it != m_selectorButtons.end(); ++it) {
+        const QString &s = it.key();
+        QPushButton *b = it.value();
+        const bool selected = m_selectedSerials.contains(s);
+        const bool mirroring = m_tiles.contains(s);
+        const QString bg = selected ? QStringLiteral("#2563eb") : QStringLiteral("#1c2436");
+        const QString border = mirroring ? QStringLiteral("#22c55e") : QStringLiteral("#2a344a");
+        b->setChecked(selected);
+        b->setStyleSheet(QStringLiteral("QPushButton{background:%1;border:1px solid %2;"
+                                        "border-radius:4px;color:#e2e8f0;font-size:11px;}")
+                             .arg(bg, border));
+    }
+}
+
+void FarmWindow::toggleSelection(const QString &serial)
+{
+    if (m_selectedSerials.contains(serial)) {
+        m_selectedSerials.remove(serial);
+    } else {
+        m_selectedSerials.insert(serial);
+    }
+    updateSelectorStyles();
+    updateTileSelectionStyles();
+}
+
+void FarmWindow::updateTileSelectionStyles()
+{
+    for (auto it = m_tiles.begin(); it != m_tiles.end(); ++it) {
+        it.value()->setSelected(m_selectedSerials.contains(it.key()));
+    }
+    updateHostTargets();    // keep the host's broadcast set in sync with the selection
+}
+
+QString FarmWindow::tileAt(const QPoint &point) const
+{
+    for (auto it = m_tiles.begin(); it != m_tiles.end(); ++it) {
+        if (it.value()->geometry().contains(point)) {
+            return it.key();
+        }
+    }
+    return QString();
+}
+
+void FarmWindow::updateHostTargets()
+{
+    if (!m_focusPanel || m_focusSerial.isEmpty()) {
+        return;
+    }
+    QList<QString> targets;
+    if (m_groupMode) {
+        targets = m_order;    // "Control All": every connected device
+    } else {
+        targets.append(m_focusSerial);    // host first
+        for (const QString &s : m_order) {
+            if (s != m_focusSerial && m_selectedSerials.contains(s)) {
+                targets.append(s);
+            }
+        }
+    }
+    m_focusPanel->setTargets(targets);
+}
+
+void FarmWindow::applyRubberSelection(const QRect &rect, bool additive)
+{
+    if (!additive) {
+        m_selectedSerials.clear();
+    }
+    for (auto it = m_tiles.begin(); it != m_tiles.end(); ++it) {
+        if (it.value()->geometry().intersects(rect)) {
+            m_selectedSerials.insert(it.key());
+        }
+    }
+    updateSelectorStyles();
+    updateTileSelectionStyles();
+    m_statusBar->setText(tr("%1 selected").arg(static_cast<int>(m_selectedSerials.size())));
+}
+
+void FarmWindow::selectAllDevices()
+{
+    const QList<QString> serials = m_numbering.keys();
+    for (const QString &s : serials) {
+        m_selectedSerials.insert(s);
+    }
+    updateSelectorStyles();
+    updateTileSelectionStyles();
+}
+
+void FarmWindow::clearDeviceSelection()
+{
+    m_selectedSerials.clear();
+    updateSelectorStyles();
+    updateTileSelectionStyles();
+}
+
+void FarmWindow::mirrorSelected()
+{
+    if (m_selectedSerials.isEmpty()) {
+        m_statusBar->setText(tr("No devices selected."));
+        return;
+    }
+    for (const QString &serial : m_selectedSerials) {
+        if (m_available.contains(serial) && !m_tiles.contains(serial)
+            && !m_connecting.contains(serial) && !m_pending.contains(serial)) {
+            m_pending.append(serial);
+        }
+    }
+    pumpConnectQueue();
+}
+
+void FarmWindow::createGroup()
+{
+    if (m_selectedSerials.isEmpty()) {
+        m_statusBar->setText(tr("Select devices first to make a group."));
+        return;
+    }
+    bool ok = false;
+    const QString name =
+        QInputDialog::getText(this, tr("New group"), tr("Group name:"), QLineEdit::Normal,
+                              QString(), &ok)
+            .trimmed();
+    if (!ok || name.isEmpty()) {
+        return;
+    }
+    QStringList serials;
+    for (const QString &s : m_selectedSerials) {
+        serials << s;
+    }
+    m_groups.insert(name, serials);
+    saveGroups();
+    rebuildGroups();
+    m_statusBar->setText(tr("Group '%1' saved (%2 devices)").arg(name).arg(serials.size()));
+}
+
+void FarmWindow::applyGroup(const QString &name)
+{
+    if (!m_groups.contains(name)) {
+        return;
+    }
+    m_selectedSerials.clear();
+    for (const QString &s : m_groups[name]) {
+        m_selectedSerials.insert(s);
+    }
+    updateSelectorStyles();
+    updateTileSelectionStyles();
+    m_statusBar->setText(tr("Group '%1' selected (%2)").arg(name).arg(m_groups[name].size()));
+}
+
+void FarmWindow::rebuildGroups()
+{
+    if (!m_groupsLayout) {
+        return;
+    }
+    while (QLayoutItem *item = m_groupsLayout->takeAt(0)) {
+        if (item->widget()) {
+            item->widget()->deleteLater();
+        }
+        delete item;
+    }
+    QStringList names = m_groups.keys();
+    names.sort();
+    for (const QString &name : names) {
+        auto *rowW = new QWidget;
+        auto *row = new QHBoxLayout(rowW);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(4);
+        auto *applyBtn =
+            new QPushButton(QStringLiteral("%1 (%2)").arg(name).arg(m_groups[name].size()), rowW);
+        auto *delBtn = new QPushButton(tr("x"), rowW);
+        delBtn->setFixedWidth(24);
+        row->addWidget(applyBtn, 1);
+        row->addWidget(delBtn, 0);
+        m_groupsLayout->addWidget(rowW);
+        connect(applyBtn, &QPushButton::clicked, this, [this, name] { applyGroup(name); });
+        connect(delBtn, &QPushButton::clicked, this, [this, name] {
+            m_groups.remove(name);
+            saveGroups();
+            rebuildGroups();
+        });
+    }
+}
+
+void FarmWindow::loadGroups()
+{
+    QSettings settings(QStringLiteral("ZamiApp"), QStringLiteral("AdbDeviceFarm"));
+    settings.beginGroup(QStringLiteral("farm_groups"));
+    const QStringList names = settings.childKeys();
+    for (const QString &name : names) {
+        m_groups.insert(name, settings.value(name).toStringList());
+    }
+    settings.endGroup();
+}
+
+void FarmWindow::saveGroups()
+{
+    QSettings settings(QStringLiteral("ZamiApp"), QStringLiteral("AdbDeviceFarm"));
+    settings.beginGroup(QStringLiteral("farm_groups"));
+    settings.remove(QString());
+    for (auto it = m_groups.begin(); it != m_groups.end(); ++it) {
+        settings.setValue(it.key(), it.value());
+    }
+    settings.endGroup();
 }
 
 void FarmWindow::resizeEvent(QResizeEvent *event)
@@ -216,6 +549,65 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
     // window resizes; reflow the columns whenever the viewport is resized.
     if (m_scroll && watched == m_scroll->viewport() && event->type() == QEvent::Resize) {
         relayout();
+        return QWidget::eventFilter(watched, event);
+    }
+
+    // Marquee selection on the grid background (tiles are mouse-transparent).
+    if (watched == m_gridHost) {
+        switch (event->type()) {
+        case QEvent::MouseButtonPress: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                m_rubberOrigin = me->position().toPoint();
+                m_dragging = false;
+            }
+            break;
+        }
+        case QEvent::MouseMove: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->buttons() & Qt::LeftButton) {
+                const QPoint p = me->position().toPoint();
+                if (!m_dragging && (p - m_rubberOrigin).manhattanLength() > 6) {
+                    m_dragging = true;
+                    m_rubberBand->setGeometry(QRect(m_rubberOrigin, QSize()));
+                    m_rubberBand->show();
+                    m_rubberBand->raise();
+                }
+                if (m_dragging) {
+                    m_rubberBand->setGeometry(QRect(m_rubberOrigin, p).normalized());
+                }
+            }
+            break;
+        }
+        case QEvent::MouseButtonRelease: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() != Qt::LeftButton) {
+                break;
+            }
+            if (m_dragging) {
+                const QRect r = m_rubberBand->geometry();
+                m_rubberBand->hide();
+                m_dragging = false;
+                applyRubberSelection(r, me->modifiers().testFlag(Qt::ControlModifier));
+            } else {
+                const QString serial = tileAt(me->position().toPoint());
+                if (!serial.isEmpty()) {
+                    onTileClicked(serial);    // toggle this tile's selection
+                }
+            }
+            break;
+        }
+        case QEvent::MouseButtonDblClick: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            const QString serial = tileAt(me->position().toPoint());
+            if (!serial.isEmpty()) {
+                onTileDoubleClicked(serial);
+            }
+            break;
+        }
+        default:
+            break;
+        }
     }
     return QWidget::eventFilter(watched, event);
 }
@@ -314,6 +706,8 @@ void FarmWindow::onAdbResult(qsc::AdbProcess::ADB_EXEC_RESULT result)
     if (args.contains("devices")) {
         if (ok) {
             m_available = m_adb.getDevicesSerialFromStdOut();
+            rebuildNumbering();
+            rebuildSelector();
             m_statusBar->setText(
                 tr("%1 device(s) detected").arg(static_cast<int>(m_available.size())));
         }
@@ -393,6 +787,7 @@ void FarmWindow::onDeviceConnected(bool success, const QString &serial, const QS
         device->setUserData(static_cast<void *>(tile));
         device->registerDeviceObserver(tile);
     }
+    updateSelectorStyles();    // mark this device as mirroring in the selector
     pumpConnectQueue();    // a slot just freed up; start the next queued device
 }
 
@@ -410,18 +805,14 @@ void FarmWindow::onDeviceDisconnected(const QString &serial)
     }
     m_connecting.remove(serial);
     removeTile(serial);
+    updateSelectorStyles();    // device no longer mirroring
     pumpConnectQueue();
 }
 
 void FarmWindow::onTileClicked(const QString &serial)
 {
-    if (!m_selected.isEmpty() && m_tiles.contains(m_selected)) {
-        m_tiles[m_selected]->setSelected(false);
-    }
-    m_selected = serial;
-    if (m_tiles.contains(serial)) {
-        m_tiles[serial]->setSelected(true);
-    }
+    m_selected = serial;       // single target for "Enable WiFi (selected)"
+    toggleSelection(serial);   // toggle multi-selection membership + highlight
 }
 
 void FarmWindow::onTileDoubleClicked(const QString &serial)
@@ -435,18 +826,35 @@ void FarmWindow::onTileDoubleClicked(const QString &serial)
     }
     m_focusSerial = serial;
 
-    m_focusPanel->showDevice(serial, serial);
     m_focusPanel->setVisible(true);
     if (DeviceTile *tile = m_tiles.value(serial, nullptr)) {
         tile->setUnderControl(true);
     }
     relayout();
+    m_focusPanel->showDevice(serial, serial);    // attach + schedule frame replay
+    updateHostTargets();    // host broadcasts to itself + the current selection
 }
 
 QList<QString> FarmWindow::inputTargets(const QString &sourceSerial) const
 {
+    auto selectedInOrder = [this]() {
+        QList<QString> targets;
+        for (const QString &s : m_order) {
+            if (m_selectedSerials.contains(s)) {
+                targets.append(s);
+            }
+        }
+        return targets;
+    };
+
+    // "Control All" broadcasts to the selection (or everything if none selected).
     if (m_groupMode) {
-        return m_order;
+        return m_selectedSerials.isEmpty() ? m_order : selectedInOrder();
+    }
+    // Otherwise, interacting with a device that's part of a multi-selection
+    // controls the whole selection (drag-select then control).
+    if (m_selectedSerials.size() > 1 && m_selectedSerials.contains(sourceSerial)) {
+        return selectedInOrder();
     }
     return QList<QString>{sourceSerial};
 }
@@ -550,8 +958,9 @@ void FarmWindow::setFrameRate(int fps)
 void FarmWindow::setGroupMode(bool on)
 {
     m_groupMode = on;
-    m_statusBar->setText(on ? tr("Control All ON — input goes to every device.")
-                            : tr("Control All OFF — input goes to the focused device."));
+    updateHostTargets();
+    m_statusBar->setText(on ? tr("Control All ON — host controls every device.")
+                            : tr("Control All OFF — host controls the selection."));
 }
 
 DeviceTile *FarmWindow::ensureTile(const QString &serial)
@@ -562,11 +971,6 @@ DeviceTile *FarmWindow::ensureTile(const QString &serial)
     }
     auto *tile = new DeviceTile(serial);
     tile->setTileWidth(m_tileWidth);
-    connect(tile, &DeviceTile::clicked, this, &FarmWindow::onTileClicked);
-    connect(tile, &DeviceTile::doubleClicked, this, &FarmWindow::onTileDoubleClicked);
-    connect(tile, &DeviceTile::mouseInput, this, &FarmWindow::onTileMouse);
-    connect(tile, &DeviceTile::wheelInput, this, &FarmWindow::onTileWheel);
-    connect(tile, &DeviceTile::keyInput, this, &FarmWindow::onTileKey);
     m_tiles.insert(serial, tile);
     m_order.append(serial);
     relayout();
@@ -620,7 +1024,7 @@ void FarmWindow::relayout()
         if (!tile) {
             continue;
         }
-        tile->setNumber(i + 1);
+        tile->setNumber(m_numbering.value(m_order.at(i), i + 1));
         m_grid->addWidget(tile, i / cols, i % cols, Qt::AlignTop | Qt::AlignLeft);
     }
     const int rows = (count + cols - 1) / cols;

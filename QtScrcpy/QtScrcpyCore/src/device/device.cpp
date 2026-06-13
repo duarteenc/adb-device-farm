@@ -82,6 +82,20 @@ void Device::registerDeviceObserver(DeviceObserver *observer)
     m_deviceObservers.insert(observer);
 }
 
+void Device::replayLastFrame(DeviceObserver *observer)
+{
+    // Re-deliver the last decoded frame so a freshly-attached view (e.g. the host
+    // panel) paints immediately instead of staying black until the device's
+    // screen next changes. Call this once the view is visible/laid out.
+    if (m_decoder && observer) {
+        m_decoder->peekYUVFrame([observer](int width, int height, uint8_t *dataY, uint8_t *dataU,
+                                           uint8_t *dataV, int linesizeY, int linesizeU,
+                                           int linesizeV) {
+            observer->onFrame(width, height, dataY, dataU, dataV, linesizeY, linesizeU, linesizeV);
+        });
+    }
+}
+
 void Device::deRegisterDeviceObserver(DeviceObserver *observer)
 {
     m_deviceObservers.erase(observer);

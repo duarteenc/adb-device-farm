@@ -21,6 +21,10 @@ public:
     void close();
     bool push(const AVPacket *packet);
     void peekFrame(std::function<void(int width, int height, uint8_t* dataRGB32)> onFrame);
+    void peekYUVFrame(
+        std::function<void(int width, int height, uint8_t* dataY, uint8_t* dataU, uint8_t* dataV,
+                           int linesizeY, int linesizeU, int linesizeV)>
+            onFrame);
 
 signals:
     void updateFPS(quint32 fps);

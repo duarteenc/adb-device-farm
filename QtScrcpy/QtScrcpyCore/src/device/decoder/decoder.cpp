@@ -128,6 +128,15 @@ void Decoder::peekFrame(std::function<void (int, int, uint8_t *)> onFrame)
     m_vb->peekRenderedFrame(onFrame);
 }
 
+void Decoder::peekYUVFrame(
+    std::function<void(int, int, uint8_t*, uint8_t*, uint8_t*, int, int, int)> onFrame)
+{
+    if (!m_vb) {
+        return;
+    }
+    m_vb->peekRenderedYUV(onFrame);
+}
+
 void Decoder::pushFrame()
 {
     if (!m_vb) {

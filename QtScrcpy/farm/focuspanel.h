@@ -1,6 +1,9 @@
 #ifndef FARM_FOCUSPANEL_H
 #define FARM_FOCUSPANEL_H
 
+#include <functional>
+
+#include <QList>
 #include <QWidget>
 
 #include "QtScrcpyCore.h"
@@ -32,6 +35,7 @@ public:
     void showDevice(const QString &serial, const QString &title);
     void detach();
     void setHostHeight(int height);    // target phone height in px (size slider)
+    void setTargets(const QList<QString> &serials);    // devices the host controls
     const QString &serial() const { return m_serial; }
 
     // qsc::DeviceObserver
@@ -48,8 +52,10 @@ private:
     void unbindDevice();
     void updateSizes();    // resize panel/mirror to the chosen host height and aspect
     void fitVideo();       // place the video (top-aligned) inside the mirror area
+    void sendToTargets(const std::function<void(qsc::IDevice *)> &fn);
 
     QString m_serial;
+    QList<QString> m_targets;    // host + selected devices the input is broadcast to
     int m_ratioW = 0;
     int m_ratioH = 0;
     int m_hostHeight = 720;    // target phone height (size slider)

@@ -35,6 +35,7 @@ public:
 
     void registerDeviceObserver(DeviceObserver* observer) override;
     void deRegisterDeviceObserver(DeviceObserver* observer) override;
+    void replayLastFrame(DeviceObserver* observer) override;
 
     bool connectDevice() override;
     void disconnectDevice() override;

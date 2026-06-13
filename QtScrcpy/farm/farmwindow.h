@@ -3,6 +3,7 @@
 
 #include <QHash>
 #include <QList>
+#include <QPoint>
 #include <QSet>
 #include <QStringList>
 #include <QWidget>
@@ -20,6 +21,9 @@ class QResizeEvent;
 class QMouseEvent;
 class QWheelEvent;
 class QKeyEvent;
+class QPushButton;
+class QVBoxLayout;
+class QRubberBand;
 
 /**
  * The v2.0 device-farm dashboard, styled after a control center: a left control
@@ -44,6 +48,10 @@ protected:
 private slots:
     void refreshDevices();
     void mirrorAll();
+    void mirrorSelected();
+    void selectAllDevices();
+    void clearDeviceSelection();
+    void createGroup();
     void stopAll();
     void connectWifi();
     void enableWifiSelected();
@@ -64,6 +72,19 @@ private slots:
 
 private:
     QWidget *buildControlPanel();
+    QWidget *buildSelectorSection();
+    void rebuildNumbering();
+    void rebuildSelector();
+    void updateSelectorStyles();
+    void toggleSelection(const QString &serial);
+    void updateTileSelectionStyles();
+    void applyRubberSelection(const QRect &rect, bool additive);
+    QString tileAt(const QPoint &point) const;
+    void updateHostTargets();
+    void applyGroup(const QString &name);
+    void loadGroups();
+    void saveGroups();
+    void rebuildGroups();
     void onAdbResult(qsc::AdbProcess::ADB_EXEC_RESULT result);
     DeviceTile *ensureTile(const QString &serial);
     void removeTile(const QString &serial);
@@ -86,8 +107,20 @@ private:
     bool m_groupMode = false;
     int m_portSeq = 0;                 // hands out a unique reverse port per device
 
+    // Numbered selector + groups
+    QSet<QString> m_selectedSerials;            // checked in the numbered selector
+    QHash<QString, int> m_numbering;            // serial -> display number
+    QHash<QString, QPushButton *> m_selectorButtons;
+    QHash<QString, QStringList> m_groups;       // group name -> serials
+    QGridLayout *m_selectorGrid = nullptr;
+    QVBoxLayout *m_groupsLayout = nullptr;
+
     QGridLayout *m_grid = nullptr;
+    QWidget *m_gridHost = nullptr;
     QScrollArea *m_scroll = nullptr;
+    QRubberBand *m_rubberBand = nullptr;    // marquee visual (child of gridHost)
+    QPoint m_rubberOrigin;
+    bool m_dragging = false;
     FocusPanel *m_focusPanel = nullptr;
     QLabel *m_statusBar = nullptr;
     QLineEdit *m_ipEdit = nullptr;

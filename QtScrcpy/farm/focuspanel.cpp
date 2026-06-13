@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -70,30 +71,22 @@ FocusPanel::FocusPanel(QWidget *parent)
         detach();
         emit closed(s);
     });
-    connect(backBtn, &QPushButton::clicked, this, [this] {
-        if (auto d = deviceFor(m_serial)) d->postGoBack();
-    });
-    connect(homeBtn, &QPushButton::clicked, this, [this] {
-        if (auto d = deviceFor(m_serial)) d->postGoHome();
-    });
-    connect(recentBtn, &QPushButton::clicked, this, [this] {
-        if (auto d = deviceFor(m_serial)) d->postAppSwitch();
-    });
-    connect(notifBtn, &QPushButton::clicked, this, [this] {
-        if (auto d = deviceFor(m_serial)) d->expandNotificationPanel();
-    });
-    connect(volUpBtn, &QPushButton::clicked, this, [this] {
-        if (auto d = deviceFor(m_serial)) d->postVolumeUp();
-    });
-    connect(volDownBtn, &QPushButton::clicked, this, [this] {
-        if (auto d = deviceFor(m_serial)) d->postVolumeDown();
-    });
-    connect(powerBtn, &QPushButton::clicked, this, [this] {
-        if (auto d = deviceFor(m_serial)) d->postPower();
-    });
-    connect(shotBtn, &QPushButton::clicked, this, [this] {
-        if (auto d = deviceFor(m_serial)) d->screenshot();
-    });
+    connect(backBtn, &QPushButton::clicked, this,
+            [this] { sendToTargets([](qsc::IDevice *d) { d->postGoBack(); }); });
+    connect(homeBtn, &QPushButton::clicked, this,
+            [this] { sendToTargets([](qsc::IDevice *d) { d->postGoHome(); }); });
+    connect(recentBtn, &QPushButton::clicked, this,
+            [this] { sendToTargets([](qsc::IDevice *d) { d->postAppSwitch(); }); });
+    connect(notifBtn, &QPushButton::clicked, this,
+            [this] { sendToTargets([](qsc::IDevice *d) { d->expandNotificationPanel(); }); });
+    connect(volUpBtn, &QPushButton::clicked, this,
+            [this] { sendToTargets([](qsc::IDevice *d) { d->postVolumeUp(); }); });
+    connect(volDownBtn, &QPushButton::clicked, this,
+            [this] { sendToTargets([](qsc::IDevice *d) { d->postVolumeDown(); }); });
+    connect(powerBtn, &QPushButton::clicked, this,
+            [this] { sendToTargets([](qsc::IDevice *d) { d->postPower(); }); });
+    connect(shotBtn, &QPushButton::clicked, this,
+            [this] { sendToTargets([](qsc::IDevice *d) { d->screenshot(); }); });
 
     auto *root = new QHBoxLayout(this);
     root->setContentsMargins(6, 6, 6, 6);
@@ -116,12 +109,22 @@ void FocusPanel::showDevice(const QString &serial, const QString &title)
     }
     unbindDevice();
     m_serial = serial;
+    m_targets = QList<QString>{serial};    // FarmWindow refines this via setTargets()
     m_ratioW = 0;
     m_ratioH = 0;
     m_title->setText(title);
     if (auto d = deviceFor(serial)) {
         d->registerDeviceObserver(this);
     }
+    // The video widget must be visible/laid out before its textures upload, so
+    // replay the last frame shortly after — otherwise a static screen stays black
+    // until the device next changes. A second pass covers slow layouts.
+    QTimer::singleShot(60, this, [this] {
+        if (auto d = deviceFor(m_serial)) d->replayLastFrame(this);
+    });
+    QTimer::singleShot(220, this, [this] {
+        if (auto d = deviceFor(m_serial)) d->replayLastFrame(this);
+    });
 }
 
 void FocusPanel::detach()
@@ -143,6 +146,23 @@ void FocusPanel::setHostHeight(int height)
 {
     m_hostHeight = height;
     updateSizes();
+}
+
+void FocusPanel::setTargets(const QList<QString> &serials)
+{
+    m_targets = serials;
+    if (m_targets.isEmpty() && !m_serial.isEmpty()) {
+        m_targets.append(m_serial);
+    }
+}
+
+void FocusPanel::sendToTargets(const std::function<void(qsc::IDevice *)> &fn)
+{
+    for (const QString &serial : m_targets) {
+        if (auto d = deviceFor(serial)) {
+            fn(d);
+        }
+    }
 }
 
 void FocusPanel::updateSizes()
@@ -200,11 +220,10 @@ bool FocusPanel::eventFilter(QObject *watched, QEvent *event)
     if (watched != m_video) {
         return QWidget::eventFilter(watched, event);
     }
-    auto device = deviceFor(m_serial);
-    if (!device) {
-        return QWidget::eventFilter(watched, event);
-    }
 
+    // Input on the host is broadcast to every target (host + current selection).
+    // Coordinates are normalized by the host's show size; we reuse the host frame
+    // size for all targets (fine for same-model fleets).
     const QSize frameSize = m_video->frameSize();
     const QSize showSize = m_video->size();
 
@@ -213,26 +232,32 @@ bool FocusPanel::eventFilter(QObject *watched, QEvent *event)
         auto *me = static_cast<QMouseEvent *>(event);
         m_video->setFocus();
         if (me->button() == Qt::RightButton) {
-            device->postGoBack();
+            sendToTargets([](qsc::IDevice *d) { d->postGoBack(); });
         } else if (me->button() == Qt::MiddleButton) {
-            device->postGoHome();
+            sendToTargets([](qsc::IDevice *d) { d->postGoHome(); });
         } else {
-            device->mouseEvent(me, frameSize, showSize);
+            sendToTargets([&](qsc::IDevice *d) { d->mouseEvent(me, frameSize, showSize); });
         }
         break;
     }
     case QEvent::MouseButtonRelease:
     case QEvent::MouseMove:
-    case QEvent::MouseButtonDblClick:
-        device->mouseEvent(static_cast<QMouseEvent *>(event), frameSize, showSize);
+    case QEvent::MouseButtonDblClick: {
+        auto *me = static_cast<QMouseEvent *>(event);
+        sendToTargets([&](qsc::IDevice *d) { d->mouseEvent(me, frameSize, showSize); });
         break;
-    case QEvent::Wheel:
-        device->wheelEvent(static_cast<QWheelEvent *>(event), frameSize, showSize);
+    }
+    case QEvent::Wheel: {
+        auto *we = static_cast<QWheelEvent *>(event);
+        sendToTargets([&](qsc::IDevice *d) { d->wheelEvent(we, frameSize, showSize); });
         break;
+    }
     case QEvent::KeyPress:
-    case QEvent::KeyRelease:
-        device->keyEvent(static_cast<QKeyEvent *>(event), frameSize, showSize);
+    case QEvent::KeyRelease: {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        sendToTargets([&](qsc::IDevice *d) { d->keyEvent(ke, frameSize, showSize); });
         break;
+    }
     default:
         break;
     }
