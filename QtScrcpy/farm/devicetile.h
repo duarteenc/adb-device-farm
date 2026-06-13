@@ -37,6 +37,7 @@ public:
     void setStatusText(const QString &text);
     void setSelected(bool selected);
     void setUnderControl(bool on);
+    void setControllable(bool on);    // mouse drives the device (on) vs grid selection (off)
     void setTileWidth(int width);
 
     QSize videoFrameSize() const;

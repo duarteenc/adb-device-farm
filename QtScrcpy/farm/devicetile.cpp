@@ -17,14 +17,12 @@ DeviceTile::DeviceTile(const QString &serial, QWidget *parent)
     , m_statusText(tr("connecting…"))
 {
     setAttribute(Qt::WA_StyledBackground, true);
-    // Grid tiles are for display + marquee selection; mouse passes through to the
-    // grid background so it can drive rubber-band selection. Control is via host.
-    setAttribute(Qt::WA_TransparentForMouseEvents, true);
     m_ip = serial.contains(':') ? serial.left(serial.indexOf(':')) : serial;
 
     // --- Video ---
     m_video = new QYUVOpenGLWidget(this);
-    m_video->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_video->setFocusPolicy(Qt::StrongFocus);
+    m_video->installEventFilter(this);
 
     // --- Overlay (number / model / ip) drawn on top of the screen ---
     m_overlay = new QWidget(m_video);
@@ -71,6 +69,7 @@ DeviceTile::DeviceTile(const QString &serial, QWidget *parent)
     layout->addWidget(m_video, 1);
 
     setSelected(false);
+    setControllable(true);
     setTileWidth(m_tileWidth);
     refreshOverlay();
 
@@ -84,6 +83,17 @@ DeviceTile::DeviceTile(const QString &serial, QWidget *parent)
 }
 
 DeviceTile::~DeviceTile() = default;
+
+void DeviceTile::setControllable(bool on)
+{
+    // When controllable, the tile/video receive mouse so input is forwarded to
+    // the device. When not, they are mouse-transparent so the grid background can
+    // drive rubber-band selection.
+    setAttribute(Qt::WA_TransparentForMouseEvents, !on);
+    if (m_video) {
+        m_video->setAttribute(Qt::WA_TransparentForMouseEvents, !on);
+    }
+}
 
 void DeviceTile::setNumber(int number)
 {

@@ -230,6 +230,7 @@ QWidget *FarmWindow::buildControlPanel()
     connect(m_ipEdit, &QLineEdit::returnPressed, this, &FarmWindow::connectWifi);
     connect(enableWifiBtn, &QPushButton::clicked, this, &FarmWindow::enableWifiSelected);
     connect(groupCheck, &QCheckBox::toggled, this, &FarmWindow::setGroupMode);
+    connect(smallCtrlCheck, &QCheckBox::toggled, this, &FarmWindow::setSmallViewControl);
 
     // Make the (potentially tall) panel scroll instead of clipping.
     auto *panelScroll = new QScrollArea(this);
@@ -982,6 +983,16 @@ void FarmWindow::setGroupMode(bool on)
     updateHostTargets();
     m_statusBar->setText(on ? tr("Control All ON — host controls every device.")
                             : tr("Control All OFF — host controls the selection."));
+}
+
+void FarmWindow::setSmallViewControl(bool on)
+{
+    m_smallViewControl = on;
+    for (DeviceTile *tile : m_tiles) {
+        tile->setControllable(on);
+    }
+    m_statusBar->setText(on ? tr("Small-view control ON — tap a tile to control it.")
+                            : tr("Small-view control OFF — drag to select on the grid."));
 }
 
 DeviceTile *FarmWindow::ensureTile(const QString &serial)

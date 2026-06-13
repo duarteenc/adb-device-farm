@@ -60,6 +60,7 @@ private slots:
     void setQuality(int maxSize);
     void setFrameRate(int fps);
     void setGroupMode(bool on);
+    void setSmallViewControl(bool on);
 
     void onDeviceConnected(bool success, const QString &serial, const QString &deviceName,
                            const QSize &size);
@@ -105,6 +106,7 @@ private:
     QString m_focusSerial;             // device shown in the embedded host panel
     QString m_wifiSerial;
     bool m_groupMode = false;
+    bool m_smallViewControl = true;    // grid tiles control their device directly
     int m_portSeq = 0;                 // hands out a unique reverse port per device
 
     // Numbered selector + groups
