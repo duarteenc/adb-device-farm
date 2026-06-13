@@ -80,53 +80,63 @@ process is still alive (a crash/`LNK`/missing-DLL exits immediately).
 
 ## Working with multiple Claude Code instances (Git Worktrees)
 
-To work on multiple features simultaneously without conflicts, use **git worktrees**. Each worktree has its own independent `build/` and `output/` directories.
+**Problem:** When running 2 Claude Code instances on this project, they share the same `build/` and `output/` directories. If both compile, they overwrite each other's executables.
 
-### Setup worktrees
+**Solution:** Use git worktrees. Each worktree is a separate working directory with its own `build/` and `output/`.
 
-```bash
-# List current worktrees
-git worktree list
+### Current setup on this machine
 
-# Create a worktree for a feature branch
-git worktree add ../adb-device-farm-feature feature/my-feature
-
-# Now you have:
-# C:\adb-device-farm\          <- main worktree (main branch)
-# C:\adb-device-farm-feature\  <- feature worktree (feature/my-feature branch)
+```
+C:\adb-device-farm\          <- Primary worktree (main branch)
+C:\adb-device-farm-feature\  <- Secondary worktree (feature/small-view-control-toggle)
 ```
 
-### Using worktrees
+View all worktrees:
+```bash
+git worktree list
+```
 
-**Claude instance 1** works in `C:\adb-device-farm` (main):
+### How to use (specific to this machine)
+
+When opening Claude Code, specify which directory:
+- **Claude #1**: Open in `C:\adb-device-farm` (works on main or new feature branches)
+- **Claude #2**: Open in `C:\adb-device-farm-feature` (works on feature/small-view-control-toggle)
+
+Each can build and run independently:
+
+**In C:\adb-device-farm:**
 ```powershell
 Get-Process QtScrcpy -ErrorAction SilentlyContinue | Stop-Process -Force
 & cmd /c "C:\adb-device-farm\scripts\build.bat"
-$exe = "C:\adb-device-farm\output\x64\RelWithDebInfo\QtScrcpy.exe"
-Start-Process -FilePath $exe -ArgumentList "--farm" -WorkingDirectory (Split-Path $exe)
+Start-Process "C:\adb-device-farm\output\x64\RelWithDebInfo\QtScrcpy.exe" -ArgumentList "--farm" -WorkingDirectory "C:\adb-device-farm\output\x64\RelWithDebInfo"
 ```
 
-**Claude instance 2** works in `C:\adb-device-farm-feature` (feature branch):
+**In C:\adb-device-farm-feature:**
 ```powershell
 Get-Process QtScrcpy -ErrorAction SilentlyContinue | Stop-Process -Force
 & cmd /c "C:\adb-device-farm-feature\scripts\build.bat"
-$exe = "C:\adb-device-farm-feature\output\x64\RelWithDebInfo\QtScrcpy.exe"
-Start-Process -FilePath $exe -ArgumentList "--farm" -WorkingDirectory (Split-Path $exe)
+Start-Process "C:\adb-device-farm-feature\output\x64\RelWithDebInfo\QtScrcpy.exe" -ArgumentList "--farm" -WorkingDirectory "C:\adb-device-farm-feature\output\x64\RelWithDebInfo"
 ```
 
-### Benefits
+Both can compile and run at the same time without conflicts.
 
-- ✅ Both instances can compile simultaneously without conflicts
-- ✅ Both executables can run at the same time
-- ✅ Changes in one worktree don't affect the other
-- ✅ Each has independent `build/` and `output/` directories
+### Managing worktrees
 
-### Cleanup
-
+Create a new worktree for another feature:
 ```bash
-# Remove a worktree when done
-git worktree remove ../adb-device-farm-feature
+cd C:\adb-device-farm
+git worktree add ..\adb-device-farm-ui feature/ui-improvements
+```
 
-# Prune stale worktree references
-git worktree prune
+Remove a worktree when done:
+```bash
+git worktree remove ..\adb-device-farm-feature
+```
+
+List all worktrees:
+```bash
+git worktree list
+# Output shows:
+# C:/adb-device-farm          <hash> [main]
+# C:/adb-device-farm-feature  <hash> [feature/small-view-control-toggle]
 ```
