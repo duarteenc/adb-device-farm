@@ -16,6 +16,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QProcess>
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QResizeEvent>
@@ -26,6 +27,7 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
+#include "config.h"
 #include "devicetile.h"
 #include "focuspanel.h"
 
@@ -35,6 +37,10 @@ constexpr int kGridMargin = 12;
 constexpr int kMinTileWidth = 160;    // floor: phones unreadable below this
 constexpr int kMaxConcurrent = 8;     // simultaneous connection setups
 constexpr quint16 kBasePort = 27183;  // reverse-tunnel port base (unique per device)
+// Every device is forced to this resolution/density on connect so all phones
+// mirror and (most importantly) accept control coordinates identically.
+constexpr const char *kNormalizedSize = "1080x2220";
+constexpr const char *kNormalizedDensity = "480";
 
 const char *kStyle = R"(
 FarmWindow { background:#0b0f17; }
@@ -766,6 +772,14 @@ void FarmWindow::onAdbResult(qsc::AdbProcess::ADB_EXEC_RESULT result)
 bool FarmWindow::startConnect(const QString &serial)
 {
     ensureTile(serial)->setStatusText(tr("connecting…"));
+
+    // Normalize resolution/density BEFORE scrcpy captures, so every phone streams
+    // and accepts control at the same coordinate space (mixed native resolutions
+    // otherwise make broadcast input land in the wrong place on some models).
+    const QString adb = Config::getInstance().getAdbPath();
+    QProcess::execute(adb, {"-s", serial, "shell",
+                            QStringLiteral("wm size %1 ; wm density %2")
+                                .arg(QLatin1String(kNormalizedSize), QLatin1String(kNormalizedDensity))});
 
     qsc::DeviceParams params;
     params.serial = serial;
