@@ -37,17 +37,30 @@ constexpr int kMaxConcurrent = 8;     // simultaneous connection setups
 constexpr quint16 kBasePort = 27183;  // reverse-tunnel port base (unique per device)
 
 const char *kStyle = R"(
-QWidget { background:#0b0f17; color:#e2e8f0; font-size:12px; }
+FarmWindow { background:#0b0f17; }
+QWidget { background:transparent; color:#e2e8f0; font-size:12px; }
 #controlPanel { background:#121826; border-right:1px solid #1e2636; }
+QLabel { background:transparent; }
 #panelTitle { font-size:16px; font-weight:bold; padding:2px 0 8px 0; }
 QPushButton { background:transparent; border:1px solid #2a344a; border-radius:5px; padding:6px 10px; }
 QPushButton:hover { background:#26314a; }
 QPushButton#primary { background:#2563eb; border:none; }
 QPushButton#primary:hover { background:#3b82f6; }
 QLineEdit { background:#0b0f17; border:1px solid #2a344a; border-radius:4px; padding:4px; }
-QCheckBox { padding:2px; }
+QCheckBox { background:transparent; padding:2px; }
 QLabel#hint { color:#7c8aa0; }
-QScrollArea, #gridHost { border:none; background:#0b0f17; }
+QScrollArea, QScrollArea > QWidget { background:transparent; border:none; }
+QScrollArea::corner { background:#121826; }
+#gridHost { background:#0b0f17; }
+#selectorScroll { background:#121826; }
+#selectorScroll::corner { background:#121826; }
+#selectorGridHost { background:#121826; }
+QScrollBar:vertical { background:#121826; width:8px; border:none; margin:0px; }
+QScrollBar::handle:vertical { background:#2a344a; border-radius:4px; min-height:20px; margin:0px; }
+QScrollBar::handle:vertical:hover { background:#3b4a5a; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border:none; background:none; height:0px; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:none; }
+QScrollBar:horizontal { background:#121826; height:0px; }
 QSlider::groove:horizontal { height:4px; background:#2a344a; border-radius:2px; }
 QSlider::handle:horizontal { width:14px; margin:-6px 0; border-radius:7px; background:#3b82f6; }
 QSlider::sub-page:horizontal { background:#2563eb; border-radius:2px; }
@@ -119,7 +132,7 @@ QWidget *FarmWindow::buildControlPanel()
 {
     auto *panel = new QWidget(this);
     panel->setObjectName("controlPanel");
-    panel->setFixedWidth(240);
+    panel->setFixedWidth(280);
 
     auto *title = new QLabel(tr("Control Center"), panel);
     title->setObjectName("panelTitle");
@@ -161,6 +174,11 @@ QWidget *FarmWindow::buildControlPanel()
 
     auto *groupCheck = new QCheckBox(tr("Control All (group input)"), panel);
 
+    auto *smallCtrlCheck = new QCheckBox(tr("Control in small view"), panel);
+    smallCtrlCheck->setChecked(m_smallViewControl);
+    smallCtrlCheck->setToolTip(tr("On: tap/drag a grid tile controls that phone.\n"
+                                  "Off: the grid is for marquee selection only."));
+
     // WiFi
     m_ipEdit = new QLineEdit(panel);
     m_ipEdit->setPlaceholderText(tr("192.168.1.50:5555"));
@@ -193,6 +211,7 @@ QWidget *FarmWindow::buildControlPanel()
     col->addWidget(new QLabel(tr("Quality/FPS apply on next Mirror All."), panel));
     col->itemAt(col->count() - 1)->widget()->setObjectName("hint");
     col->addWidget(sep());
+    col->addWidget(smallCtrlCheck);
     col->addWidget(groupCheck);
     col->addWidget(sep());
     col->addWidget(buildSelectorSection());
@@ -215,7 +234,7 @@ QWidget *FarmWindow::buildControlPanel()
     // Make the (potentially tall) panel scroll instead of clipping.
     auto *panelScroll = new QScrollArea(this);
     panelScroll->setWidgetResizable(true);
-    panelScroll->setFixedWidth(256);
+    panelScroll->setFixedWidth(296);
     panelScroll->setFrameShape(QFrame::NoFrame);
     panelScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     panelScroll->setWidget(panel);
@@ -250,11 +269,13 @@ QWidget *FarmWindow::buildSelectorSection()
     v->addWidget(hint);
 
     auto *gridHost = new QWidget(w);
+    gridHost->setObjectName("selectorGridHost");
     m_selectorGrid = new QGridLayout(gridHost);
     m_selectorGrid->setContentsMargins(0, 0, 0, 0);
     m_selectorGrid->setSpacing(4);
     m_selectorGrid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     auto *gridScroll = new QScrollArea(w);
+    gridScroll->setObjectName("selectorScroll");
     gridScroll->setWidgetResizable(true);
     gridScroll->setFixedHeight(150);
     gridScroll->setFrameShape(QFrame::NoFrame);
@@ -971,6 +992,13 @@ DeviceTile *FarmWindow::ensureTile(const QString &serial)
     }
     auto *tile = new DeviceTile(serial);
     tile->setTileWidth(m_tileWidth);
+    tile->setControllable(m_smallViewControl);
+    // Per-tile control (active only when the tile is controllable; otherwise the
+    // tile is mouse-transparent and the grid drives marquee selection instead).
+    connect(tile, &DeviceTile::mouseInput, this, &FarmWindow::onTileMouse);
+    connect(tile, &DeviceTile::wheelInput, this, &FarmWindow::onTileWheel);
+    connect(tile, &DeviceTile::keyInput, this, &FarmWindow::onTileKey);
+    connect(tile, &DeviceTile::doubleClicked, this, &FarmWindow::onTileDoubleClicked);
     m_tiles.insert(serial, tile);
     m_order.append(serial);
     relayout();
