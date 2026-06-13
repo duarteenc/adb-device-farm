@@ -77,3 +77,56 @@ process is still alive (a crash/`LNK`/missing-DLL exits immediately).
 - Each device connection needs a **unique `scid` and `localPort`** (see
   `FarmWindow::startConnect`) or simultaneous connections collide on port 27183.
 - Commit messages end with the Co-Authored-By trailer; commit/push only when asked.
+
+## Working with multiple Claude Code instances (Git Worktrees)
+
+To work on multiple features simultaneously without conflicts, use **git worktrees**. Each worktree has its own independent `build/` and `output/` directories.
+
+### Setup worktrees
+
+```bash
+# List current worktrees
+git worktree list
+
+# Create a worktree for a feature branch
+git worktree add ../adb-device-farm-feature feature/my-feature
+
+# Now you have:
+# C:\adb-device-farm\          <- main worktree (main branch)
+# C:\adb-device-farm-feature\  <- feature worktree (feature/my-feature branch)
+```
+
+### Using worktrees
+
+**Claude instance 1** works in `C:\adb-device-farm` (main):
+```powershell
+Get-Process QtScrcpy -ErrorAction SilentlyContinue | Stop-Process -Force
+& cmd /c "C:\adb-device-farm\scripts\build.bat"
+$exe = "C:\adb-device-farm\output\x64\RelWithDebInfo\QtScrcpy.exe"
+Start-Process -FilePath $exe -ArgumentList "--farm" -WorkingDirectory (Split-Path $exe)
+```
+
+**Claude instance 2** works in `C:\adb-device-farm-feature` (feature branch):
+```powershell
+Get-Process QtScrcpy -ErrorAction SilentlyContinue | Stop-Process -Force
+& cmd /c "C:\adb-device-farm-feature\scripts\build.bat"
+$exe = "C:\adb-device-farm-feature\output\x64\RelWithDebInfo\QtScrcpy.exe"
+Start-Process -FilePath $exe -ArgumentList "--farm" -WorkingDirectory (Split-Path $exe)
+```
+
+### Benefits
+
+- ✅ Both instances can compile simultaneously without conflicts
+- ✅ Both executables can run at the same time
+- ✅ Changes in one worktree don't affect the other
+- ✅ Each has independent `build/` and `output/` directories
+
+### Cleanup
+
+```bash
+# Remove a worktree when done
+git worktree remove ../adb-device-farm-feature
+
+# Prune stale worktree references
+git worktree prune
+```
