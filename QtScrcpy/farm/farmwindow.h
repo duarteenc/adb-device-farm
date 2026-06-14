@@ -72,6 +72,7 @@ private slots:
     void onTileKey(const QString &serial, QKeyEvent *event);
     void onTileReloadRequested(const QString &serial);
     void onTileContextMenuRequested(const QString &serial, const QPoint &globalPos);
+    void openAdbController();
 
 private:
     QWidget *buildControlPanel();

@@ -1,4 +1,5 @@
 #include "farmwindow.h"
+#include "adbcontrollerdialog.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1264,6 +1265,13 @@ void FarmWindow::showTileContextMenu(const QString &serial, const QPoint &global
         onTileReloadRequested(serial);
     });
 
+    QAction *adbControllerAction = menu.addAction(tr("ADB Controller"));
+    connect(adbControllerAction, &QAction::triggered, this, [this, serial]() {
+        m_selectedSerials.clear();
+        m_selectedSerials.insert(serial);
+        openAdbController();
+    });
+
     menu.exec(globalPos);
 }
 
@@ -1278,6 +1286,9 @@ void FarmWindow::showMultiSelectContextMenu(const QPoint &globalPos)
             onTileReloadRequested(serial);
         }
     });
+
+    QAction *adbControllerAction = menu.addAction(tr("ADB Controller"));
+    connect(adbControllerAction, &QAction::triggered, this, &FarmWindow::openAdbController);
 
     menu.exec(globalPos);
 }
@@ -1429,4 +1440,21 @@ QString FarmWindow::serverPath()
         path = QCoreApplication::applicationDirPath() + "/scrcpy-server";
     }
     return path;
+}
+
+void FarmWindow::openAdbController()
+{
+    if (m_selectedSerials.isEmpty()) {
+        m_statusBar->setText(tr("No devices selected."));
+        return;
+    }
+
+    QStringList serials;
+    for (const QString &serial : m_selectedSerials) {
+        serials << serial;
+    }
+
+    auto *dialog = new AdbControllerDialog(serials, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->exec();
 }

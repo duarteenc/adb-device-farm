@@ -196,6 +196,8 @@ source_group(groupcontroller FILES ${QC_GROUP_CONTROLLER})
 
 # farm (v2.0 device-farm dashboard)
 set(QC_FARM_SOURCES
+    farm/adbcontrollerdialog.h
+    farm/adbcontrollerdialog.cpp
     farm/devicetile.h
     farm/devicetile.cpp
     farm/farmwindow.h
