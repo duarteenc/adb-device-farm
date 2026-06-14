@@ -114,6 +114,11 @@ FarmWindow::FarmWindow(QWidget *parent)
         m_focusPanel->hide();
         relayout();
     });
+    connect(m_focusPanel, &FocusPanel::adbControllerRequested, this, [this](const QString &serial) {
+        m_selectedSerials.clear();
+        m_selectedSerials.insert(serial);
+        openAdbController();
+    });
 
     auto *root = new QHBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
