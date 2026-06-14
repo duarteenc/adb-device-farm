@@ -70,6 +70,8 @@ private slots:
     void onTileMouse(const QString &serial, QMouseEvent *event);
     void onTileWheel(const QString &serial, QWheelEvent *event);
     void onTileKey(const QString &serial, QKeyEvent *event);
+    void onTileReloadRequested(const QString &serial);
+    void onTileContextMenuRequested(const QString &serial, const QPoint &globalPos);
 
 private:
     QWidget *buildControlPanel();
@@ -77,10 +79,12 @@ private:
     void rebuildNumbering();
     void rebuildSelector();
     void updateSelectorStyles();
+    void updateSelectorButtonStyle(const QString &serial, bool preview = false);
     void toggleSelection(const QString &serial);
     void updateTileSelectionStyles();
     void applyRubberSelection(const QRect &rect, bool additive);
     QString tileAt(const QPoint &point) const;
+    QString selectorButtonAt(const QPoint &point) const;
     void updateHostTargets();
     void applyGroup(const QString &name);
     void loadGroups();
@@ -94,6 +98,8 @@ private:
     bool startConnect(const QString &serial);
     void updateConnectStatus();
     QList<QString> inputTargets(const QString &sourceSerial) const;
+    void showTileContextMenu(const QString &serial, const QPoint &globalPos);
+    void showMultiSelectContextMenu(const QPoint &globalPos);
     static QString serverPath();
 
     qsc::AdbProcess m_adb;
@@ -102,11 +108,12 @@ private:
     QList<QString> m_order;
     QStringList m_pending;             // serials waiting to connect
     QSet<QString> m_connecting;        // serials currently establishing
+    QSet<QString> m_reloading;         // serials being reloaded (keep tile alive)
     QString m_selected;
     QString m_focusSerial;             // device shown in the embedded host panel
     QString m_wifiSerial;
     bool m_groupMode = false;
-    bool m_smallViewControl = true;    // grid tiles control their device directly
+    bool m_smallViewControl = false;   // grid tiles control their device directly
     int m_portSeq = 0;                 // hands out a unique reverse port per device
 
     // Numbered selector + groups
@@ -115,7 +122,14 @@ private:
     QHash<QString, QPushButton *> m_selectorButtons;
     QHash<QString, QStringList> m_groups;       // group name -> serials
     QGridLayout *m_selectorGrid = nullptr;
+    QWidget *m_selectorGridHost = nullptr;
     QVBoxLayout *m_groupsLayout = nullptr;
+    QRubberBand *m_selectorRubberBand = nullptr;
+    QPoint m_selectorRubberOrigin;
+    bool m_selectorDragging = false;
+    QSet<QString> m_selectorPreDragSelection;
+    QSet<QString> m_selectorCurrentDragSelection;
+    QSet<QString> m_selectorButtonsInPreview;
 
     QGridLayout *m_grid = nullptr;
     QWidget *m_gridHost = nullptr;
@@ -123,6 +137,7 @@ private:
     QRubberBand *m_rubberBand = nullptr;    // marquee visual (child of gridHost)
     QPoint m_rubberOrigin;
     bool m_dragging = false;
+    QSet<QString> m_tilesUnderRubber;       // tiles currently under rubber band (for preview)
     FocusPanel *m_focusPanel = nullptr;
     QLabel *m_statusBar = nullptr;
     QLineEdit *m_ipEdit = nullptr;

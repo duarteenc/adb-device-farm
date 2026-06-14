@@ -11,6 +11,7 @@ class QLabel;
 class QMouseEvent;
 class QWheelEvent;
 class QKeyEvent;
+class QPropertyAnimation;
 
 /**
  * One device view in the farm grid: an OpenGL YUV renderer with the device's
@@ -27,6 +28,7 @@ class DeviceTile
     , public qsc::DeviceObserver
 {
     Q_OBJECT
+    Q_PROPERTY(int spinnerRotation READ spinnerRotation WRITE setSpinnerRotation)
 public:
     explicit DeviceTile(const QString &serial, QWidget *parent = nullptr);
     ~DeviceTile() override;
@@ -39,9 +41,14 @@ public:
     void setUnderControl(bool on);
     void setControllable(bool on);    // mouse drives the device (on) vs grid selection (off)
     void setTileWidth(int width);
+    void setLoading(bool loading);
+    void setSelectionPreview(bool preview);
 
     QSize videoFrameSize() const;
     QSize videoShowSize() const;
+
+    int spinnerRotation() const { return m_spinnerRotation; }
+    void setSpinnerRotation(int rotation) { m_spinnerRotation = rotation; }
 
     // qsc::DeviceObserver
     void onFrame(int width, int height, uint8_t *dataY, uint8_t *dataU, uint8_t *dataV,
@@ -55,13 +62,18 @@ signals:
     void wheelInput(const QString &serial, QWheelEvent *event);
     void keyInput(const QString &serial, QKeyEvent *event);
     void fpsUpdated(quint32 fps);    // internal: decoder thread -> GUI thread
+    void reloadRequested(const QString &serial);
+    void contextMenuRequested(const QString &serial, const QPoint &globalPos);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
 
 private:
     void refreshOverlay();
     void applyBorder();
+    void showContextMenu(const QPoint &pos);
 
     QString m_serial;
     QString m_ip;
@@ -71,8 +83,11 @@ private:
     quint32 m_fps = 0;
     bool m_selected = false;
     bool m_underControl = false;
+    bool m_loading = false;
+    bool m_selectionPreview = false;
     int m_tileWidth = 190;
     double m_frameAspect = 2.0;    // height/width of the device frame (auto from video)
+    int m_spinnerRotation = 0;
 
     QYUVOpenGLWidget *m_video = nullptr;
     QWidget *m_overlay = nullptr;     // sits on top of the video, anchored to the top
@@ -80,6 +95,7 @@ private:
     QLabel *m_modelLabel = nullptr;
     QLabel *m_ipLabel = nullptr;
     QLabel *m_fpsLabel = nullptr;
+    QPropertyAnimation *m_spinnerAnimation = nullptr;
 };
 
 #endif // FARM_DEVICETILE_H

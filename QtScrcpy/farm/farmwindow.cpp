@@ -15,6 +15,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QProcess>
 #include <QPushButton>
@@ -125,6 +126,9 @@ FarmWindow::FarmWindow(QWidget *parent)
     connect(&qsc::IDeviceManage::getInstance(), &qsc::IDeviceManage::deviceDisconnected, this,
             &FarmWindow::onDeviceDisconnected);
     connect(&m_adb, &qsc::AdbProcess::adbProcessResult, this, &FarmWindow::onAdbResult);
+
+    // Set minimum window size
+    setMinimumSize(1280, 720);
 
     refreshDevices();
 }
@@ -275,18 +279,26 @@ QWidget *FarmWindow::buildSelectorSection()
     hint->setWordWrap(true);
     v->addWidget(hint);
 
-    auto *gridHost = new QWidget(w);
-    gridHost->setObjectName("selectorGridHost");
-    m_selectorGrid = new QGridLayout(gridHost);
+    m_selectorGridHost = new QWidget(w);
+    m_selectorGridHost->setObjectName("selectorGridHost");
+    m_selectorGridHost->setMouseTracking(true);
+    m_selectorGridHost->setCursor(Qt::PointingHandCursor);
+    m_selectorGrid = new QGridLayout(m_selectorGridHost);
     m_selectorGrid->setContentsMargins(0, 0, 0, 0);
     m_selectorGrid->setSpacing(4);
     m_selectorGrid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+
+    // Create rubber band for visual drag selection
+    m_selectorRubberBand = new QRubberBand(QRubberBand::Rectangle, m_selectorGridHost);
+    m_selectorRubberBand->hide();
+
     auto *gridScroll = new QScrollArea(w);
     gridScroll->setObjectName("selectorScroll");
     gridScroll->setWidgetResizable(true);
     gridScroll->setFixedHeight(150);
     gridScroll->setFrameShape(QFrame::NoFrame);
-    gridScroll->setWidget(gridHost);
+    gridScroll->setWidget(m_selectorGridHost);
+    m_selectorGridHost->installEventFilter(this);
     v->addWidget(gridScroll);
 
     auto *grpLabel = new QLabel(tr("Groups"), w);
@@ -344,6 +356,8 @@ void FarmWindow::rebuildNumbering()
             connect(tile, &DeviceTile::wheelInput, this, &FarmWindow::onTileWheel);
             connect(tile, &DeviceTile::keyInput, this, &FarmWindow::onTileKey);
             connect(tile, &DeviceTile::doubleClicked, this, &FarmWindow::onTileDoubleClicked);
+            connect(tile, &DeviceTile::reloadRequested, this, &FarmWindow::onTileReloadRequested);
+            connect(tile, &DeviceTile::contextMenuRequested, this, &FarmWindow::onTileContextMenuRequested);
 
             m_tiles.insert(serial, tile);
         }
@@ -378,6 +392,11 @@ void FarmWindow::rebuildSelector()
         b->setCheckable(true);
         b->setFixedSize(40, 28);
         b->setToolTip(s.section(':', 0, 0));
+
+        // Install event filter to detect double clicks
+        b->installEventFilter(this);
+        b->setProperty("deviceSerial", s);
+
         connect(b, &QPushButton::clicked, this, [this, s] { toggleSelection(s); });
         m_selectorGrid->addWidget(b, i / cols, i % cols);
         m_selectorButtons.insert(s, b);
@@ -389,17 +408,42 @@ void FarmWindow::rebuildSelector()
 void FarmWindow::updateSelectorStyles()
 {
     for (auto it = m_selectorButtons.begin(); it != m_selectorButtons.end(); ++it) {
-        const QString &s = it.key();
-        QPushButton *b = it.value();
-        const bool selected = m_selectedSerials.contains(s);
-        const bool mirroring = m_tiles.contains(s);
-        const QString bg = selected ? QStringLiteral("#2563eb") : QStringLiteral("#1c2436");
-        const QString border = mirroring ? QStringLiteral("#22c55e") : QStringLiteral("#2a344a");
-        b->setChecked(selected);
-        b->setStyleSheet(QStringLiteral("QPushButton{background:%1;border:1px solid %2;"
-                                        "border-radius:4px;color:#e2e8f0;font-size:11px;}")
-                             .arg(bg, border));
+        updateSelectorButtonStyle(it.key());
     }
+}
+
+void FarmWindow::updateSelectorButtonStyle(const QString &serial, bool preview)
+{
+    QPushButton *b = m_selectorButtons.value(serial, nullptr);
+    if (!b) {
+        return;
+    }
+
+    const bool selected = m_selectedSerials.contains(serial);
+    const bool mirroring = m_tiles.contains(serial);
+
+    QString bg, border;
+    int borderWidth = 1;
+
+    if (preview) {
+        // Preview style: light blue with thicker border
+        bg = QStringLiteral("#3b82f6");
+        border = QStringLiteral("#60a5fa");
+        borderWidth = 2;
+    } else if (selected) {
+        bg = QStringLiteral("#2563eb");
+        border = mirroring ? QStringLiteral("#22c55e") : QStringLiteral("#2a344a");
+    } else {
+        bg = QStringLiteral("#1c2436");
+        border = mirroring ? QStringLiteral("#22c55e") : QStringLiteral("#2a344a");
+    }
+
+    b->setChecked(selected || preview);
+    b->setStyleSheet(QStringLiteral("QPushButton{background:%1;border:%2px solid %3;"
+                                    "border-radius:4px;color:#e2e8f0;font-size:11px;}")
+                         .arg(bg)
+                         .arg(borderWidth)
+                         .arg(border));
 }
 
 void FarmWindow::toggleSelection(const QString &serial)
@@ -425,6 +469,17 @@ QString FarmWindow::tileAt(const QPoint &point) const
 {
     for (auto it = m_tiles.begin(); it != m_tiles.end(); ++it) {
         if (it.value()->geometry().contains(point)) {
+            return it.key();
+        }
+    }
+    return QString();
+}
+
+QString FarmWindow::selectorButtonAt(const QPoint &point) const
+{
+    for (auto it = m_selectorButtons.begin(); it != m_selectorButtons.end(); ++it) {
+        QPushButton *btn = it.value();
+        if (btn->geometry().contains(point)) {
             return it.key();
         }
     }
@@ -607,6 +662,89 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
         return QWidget::eventFilter(watched, event);
     }
 
+    // Double-click on selector buttons to open in host mode
+    if (qobject_cast<QPushButton *>(watched) && event->type() == QEvent::MouseButtonDblClick) {
+        auto *button = qobject_cast<QPushButton *>(watched);
+        if (button && button->property("deviceSerial").isValid()) {
+            const QString serial = button->property("deviceSerial").toString();
+            onTileDoubleClicked(serial);
+            return true;
+        }
+    }
+
+    // Drag selection on the selector grid
+    if (watched == m_selectorGridHost) {
+        switch (event->type()) {
+        case QEvent::MouseButtonPress: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                m_selectorRubberOrigin = me->position().toPoint();
+                m_selectorDragging = false;
+                // Store current selection to restore if it's just a click
+                m_selectorPreDragSelection = m_selectedSerials;
+            }
+            break;
+        }
+        case QEvent::MouseMove: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->buttons() & Qt::LeftButton) {
+                const QPoint p = me->position().toPoint();
+                if (!m_selectorDragging && (p - m_selectorRubberOrigin).manhattanLength() > 6) {
+                    m_selectorDragging = true;
+                    m_selectorRubberBand->setGeometry(QRect(m_selectorRubberOrigin, QSize()));
+                    m_selectorRubberBand->show();
+                    m_selectorRubberBand->raise();
+                    m_selectorGridHost->setCursor(Qt::ClosedHandCursor);
+                    // Clear previous selection when starting a new drag
+                    m_selectedSerials.clear();
+                    m_selectorCurrentDragSelection.clear();
+                    updateSelectorStyles();
+                }
+                if (m_selectorDragging) {
+                    m_selectorRubberBand->setGeometry(QRect(m_selectorRubberOrigin, p).normalized());
+                    // Build new selection based on rubber band
+                    QSet<QString> newSelection;
+                    QRect rubberRect = m_selectorRubberBand->geometry();
+                    for (auto it = m_selectorButtons.begin(); it != m_selectorButtons.end(); ++it) {
+                        QPushButton *btn = it.value();
+                        if (rubberRect.intersects(btn->geometry())) {
+                            newSelection.insert(it.key());
+                        }
+                    }
+                    // Only update if selection changed
+                    if (newSelection != m_selectorCurrentDragSelection) {
+                        m_selectorCurrentDragSelection = newSelection;
+                        m_selectedSerials = newSelection;
+                        updateSelectorStyles();
+                    }
+                }
+            }
+            break;
+        }
+        case QEvent::MouseButtonRelease: {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                if (m_selectorDragging) {
+                    m_selectorRubberBand->hide();
+                    m_selectorDragging = false;
+                    m_selectorCurrentDragSelection.clear();
+                } else {
+                    // Single click - toggle the clicked button
+                    const QString serial = selectorButtonAt(me->position().toPoint());
+                    if (!serial.isEmpty()) {
+                        toggleSelection(serial);
+                    }
+                }
+                m_selectorGridHost->setCursor(Qt::PointingHandCursor);
+                m_selectorPreDragSelection.clear();
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
     // Marquee selection on the grid background (tiles are mouse-transparent).
     if (watched == m_gridHost) {
         switch (event->type()) {
@@ -615,6 +753,16 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
             if (me->button() == Qt::LeftButton) {
                 m_rubberOrigin = me->position().toPoint();
                 m_dragging = false;
+            } else if (me->button() == Qt::RightButton) {
+                // Check if we have multiple selected devices
+                if (!m_selectedSerials.isEmpty()) {
+                    showMultiSelectContextMenu(me->globalPosition().toPoint());
+                } else {
+                    const QString serial = tileAt(me->position().toPoint());
+                    if (!serial.isEmpty()) {
+                        showTileContextMenu(serial, me->globalPosition().toPoint());
+                    }
+                }
             }
             break;
         }
@@ -630,6 +778,46 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
                 }
                 if (m_dragging) {
                     m_rubberBand->setGeometry(QRect(m_rubberOrigin, p).normalized());
+
+                    // Update preview of tiles under rubber band
+                    QSet<QString> newTilesUnderRubber;
+                    const QRect rubberRect = m_rubberBand->geometry();
+                    for (auto it = m_tiles.begin(); it != m_tiles.end(); ++it) {
+                        if (it.value()->geometry().intersects(rubberRect)) {
+                            newTilesUnderRubber.insert(it.key());
+                        }
+                    }
+
+                    // Only update if changed
+                    if (newTilesUnderRubber != m_tilesUnderRubber) {
+                        // Remove preview from tiles no longer under rubber
+                        for (const QString &serial : m_tilesUnderRubber) {
+                            if (!newTilesUnderRubber.contains(serial)) {
+                                if (DeviceTile *tile = m_tiles.value(serial, nullptr)) {
+                                    tile->setSelectionPreview(false);
+                                }
+                                // Remove preview from selector button
+                                if (m_selectorButtonsInPreview.contains(serial)) {
+                                    updateSelectorButtonStyle(serial, false);
+                                    m_selectorButtonsInPreview.remove(serial);
+                                }
+                            }
+                        }
+                        // Add preview to new tiles under rubber
+                        for (const QString &serial : newTilesUnderRubber) {
+                            if (!m_tilesUnderRubber.contains(serial)) {
+                                if (DeviceTile *tile = m_tiles.value(serial, nullptr)) {
+                                    tile->setSelectionPreview(true);
+                                }
+                                // Add preview to selector button
+                                if (m_selectorButtons.contains(serial)) {
+                                    updateSelectorButtonStyle(serial, true);
+                                    m_selectorButtonsInPreview.insert(serial);
+                                }
+                            }
+                        }
+                        m_tilesUnderRubber = newTilesUnderRubber;
+                    }
                 }
             }
             break;
@@ -643,6 +831,21 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
                 const QRect r = m_rubberBand->geometry();
                 m_rubberBand->hide();
                 m_dragging = false;
+
+                // Clear preview from all tiles
+                for (const QString &serial : m_tilesUnderRubber) {
+                    if (DeviceTile *tile = m_tiles.value(serial, nullptr)) {
+                        tile->setSelectionPreview(false);
+                    }
+                }
+                m_tilesUnderRubber.clear();
+
+                // Clear preview from all selector buttons
+                for (const QString &serial : m_selectorButtonsInPreview) {
+                    updateSelectorButtonStyle(serial, false);
+                }
+                m_selectorButtonsInPreview.clear();
+
                 applyRubberSelection(r, me->modifiers().testFlag(Qt::ControlModifier));
             } else {
                 const QString serial = tileAt(me->position().toPoint());
@@ -800,7 +1003,9 @@ void FarmWindow::onAdbResult(qsc::AdbProcess::ADB_EXEC_RESULT result)
 
 bool FarmWindow::startConnect(const QString &serial)
 {
-    ensureTile(serial)->setStatusText(tr("connecting…"));
+    DeviceTile *tile = ensureTile(serial);
+    tile->setStatusText(tr("connecting…"));
+    tile->setLoading(true);  // Start loading animation
 
     // Normalize resolution/density BEFORE scrcpy captures, so every phone streams
     // and accepts control at the same coordinate space (mixed native resolutions
@@ -826,6 +1031,7 @@ bool FarmWindow::startConnect(const QString &serial)
 
     if (!qsc::IDeviceManage::getInstance().connectDevice(params)) {
         m_statusBar->setText(tr("connect failed: %1").arg(serial));
+        tile->setLoading(false);
         removeTile(serial);
         return false;
     }
@@ -837,7 +1043,13 @@ void FarmWindow::onDeviceConnected(bool success, const QString &serial, const QS
 {
     Q_UNUSED(size);
     m_connecting.remove(serial);
+    m_reloading.remove(serial);  // Clear reloading flag
+
     if (!success) {
+        DeviceTile *tile = m_tiles.value(serial, nullptr);
+        if (tile) {
+            tile->setLoading(false);
+        }
         removeTile(serial);
         pumpConnectQueue();    // free the slot; start the next queued device
         return;
@@ -846,6 +1058,7 @@ void FarmWindow::onDeviceConnected(bool success, const QString &serial, const QS
     DeviceTile *tile = ensureTile(serial);
     tile->setModel(deviceName);
     tile->setStatusText(tr("connected"));
+    tile->setLoading(false);  // Stop loading animation
 
     auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
     if (device) {
@@ -873,7 +1086,12 @@ void FarmWindow::onDeviceDisconnected(const QString &serial)
         m_focusSerial.clear();
     }
     m_connecting.remove(serial);
-    removeTile(serial);
+
+    // Don't remove tile if it's being reloaded
+    if (!m_reloading.contains(serial)) {
+        removeTile(serial);
+    }
+
     updateSelectorStyles();    // device no longer mirroring
     pumpConnectQueue();
 }
@@ -889,6 +1107,19 @@ void FarmWindow::onTileDoubleClicked(const QString &serial)
     if (!qsc::IDeviceManage::getInstance().getDevice(serial)) {
         return;    // not connected yet
     }
+
+    // If double-clicking the currently focused device, close host mode
+    if (m_focusSerial == serial && m_focusPanel->isVisible()) {
+        m_focusPanel->detach();
+        m_focusPanel->hide();
+        if (DeviceTile *tile = m_tiles.value(serial, nullptr)) {
+            tile->setUnderControl(false);
+        }
+        m_focusSerial.clear();
+        relayout();
+        return;
+    }
+
     // Move the "under control" marker to the new device.
     if (!m_focusSerial.isEmpty() && m_focusSerial != serial && m_tiles.contains(m_focusSerial)) {
         m_tiles[m_focusSerial]->setUnderControl(false);
@@ -992,6 +1223,76 @@ void FarmWindow::onTileKey(const QString &serial, QKeyEvent *event)
     }
 }
 
+void FarmWindow::onTileReloadRequested(const QString &serial)
+{
+    // Mark as reloading to prevent tile removal in onDeviceDisconnected
+    m_reloading.insert(serial);
+
+    // Disconnect the device if connected
+    auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
+    if (device) {
+        DeviceTile *tile = m_tiles.value(serial, nullptr);
+        if (tile) {
+            device->deRegisterDeviceObserver(tile);
+        }
+        qsc::IDeviceManage::getInstance().disconnectDevice(serial);
+    }
+
+    // Remove from connecting/pending state
+    m_connecting.remove(serial);
+    m_pending.removeAll(serial);
+
+    // Keep the tile and show loading animation
+    DeviceTile *tile = m_tiles.value(serial, nullptr);
+    if (tile) {
+        tile->setModel("...");
+        tile->setStatusText(tr("reconnecting…"));
+        tile->setLoading(true);
+    }
+
+    // Add to pending queue and start connection
+    m_pending.append(serial);
+    pumpConnectQueue();
+}
+
+void FarmWindow::showTileContextMenu(const QString &serial, const QPoint &globalPos)
+{
+    QMenu menu(this);
+
+    QAction *reloadAction = menu.addAction(tr("Recargar"));
+    connect(reloadAction, &QAction::triggered, this, [this, serial]() {
+        onTileReloadRequested(serial);
+    });
+
+    menu.exec(globalPos);
+}
+
+void FarmWindow::showMultiSelectContextMenu(const QPoint &globalPos)
+{
+    QMenu menu(this);
+
+    const int count = m_selectedSerials.size();
+    QAction *reloadAction = menu.addAction(tr("Recargar %1 dispositivos").arg(count));
+    connect(reloadAction, &QAction::triggered, this, [this]() {
+        for (const QString &serial : m_selectedSerials) {
+            onTileReloadRequested(serial);
+        }
+    });
+
+    menu.exec(globalPos);
+}
+
+void FarmWindow::onTileContextMenuRequested(const QString &serial, const QPoint &globalPos)
+{
+    // If we have multiple devices selected, show the multi-select menu
+    if (!m_selectedSerials.isEmpty()) {
+        showMultiSelectContextMenu(globalPos);
+    } else {
+        // Otherwise show the single-tile menu
+        showTileContextMenu(serial, globalPos);
+    }
+}
+
 void FarmWindow::setTileSize(int width)
 {
     m_tileWidth = width;
@@ -1057,6 +1358,8 @@ DeviceTile *FarmWindow::ensureTile(const QString &serial)
     connect(tile, &DeviceTile::wheelInput, this, &FarmWindow::onTileWheel);
     connect(tile, &DeviceTile::keyInput, this, &FarmWindow::onTileKey);
     connect(tile, &DeviceTile::doubleClicked, this, &FarmWindow::onTileDoubleClicked);
+    connect(tile, &DeviceTile::reloadRequested, this, &FarmWindow::onTileReloadRequested);
+    connect(tile, &DeviceTile::contextMenuRequested, this, &FarmWindow::onTileContextMenuRequested);
     m_tiles.insert(serial, tile);
     m_order.append(serial);
     relayout();

@@ -1,10 +1,15 @@
 #include "devicetile.h"
 
+#include <QContextMenuEvent>
 #include <QEvent>
 #include <QGridLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QPropertyAnimation>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -73,6 +78,16 @@ DeviceTile::DeviceTile(const QString &serial, QWidget *parent)
     setTileWidth(m_tileWidth);
     refreshOverlay();
 
+    // Setup spinner animation
+    m_spinnerAnimation = new QPropertyAnimation(this, "spinnerRotation", this);
+    m_spinnerAnimation->setDuration(1000);
+    m_spinnerAnimation->setStartValue(0);
+    m_spinnerAnimation->setEndValue(360);
+    m_spinnerAnimation->setLoopCount(-1);
+    connect(m_spinnerAnimation, &QPropertyAnimation::valueChanged, this, [this]() {
+        update();
+    });
+
     connect(
         this, &DeviceTile::fpsUpdated, this,
         [this](quint32 fps) {
@@ -93,6 +108,17 @@ void DeviceTile::setControllable(bool on)
     if (m_video) {
         m_video->setAttribute(Qt::WA_TransparentForMouseEvents, !on);
     }
+}
+
+void DeviceTile::setLoading(bool loading)
+{
+    m_loading = loading;
+    if (loading) {
+        m_spinnerAnimation->start();
+    } else {
+        m_spinnerAnimation->stop();
+    }
+    update();
 }
 
 void DeviceTile::setNumber(int number)
@@ -126,16 +152,38 @@ void DeviceTile::setUnderControl(bool on)
     applyBorder();
 }
 
+void DeviceTile::setSelectionPreview(bool preview)
+{
+    m_selectionPreview = preview;
+    applyBorder();
+}
+
 void DeviceTile::applyBorder()
 {
-    // Under-control (purple) wins over click-selection (blue) over idle (grey).
-    const QString color = m_underControl ? QStringLiteral("#a855f7")
-                                          : (m_selected ? QStringLiteral("#3b82f6")
-                                                        : QStringLiteral("#1e2636"));
-    const int width = (m_underControl || m_selected) ? 2 : 1;
-    setStyleSheet(QStringLiteral("DeviceTile{border:%1px solid %2; border-radius:6px; background:#0f1422;}")
+    // Priority: under-control (purple) > selection-preview (light green) > click-selection (green) > idle (grey)
+    QString color;
+    int width;
+    QString background = QStringLiteral("#0f1422");
+
+    if (m_underControl) {
+        color = QStringLiteral("#a855f7");  // purple
+        width = 12;
+    } else if (m_selectionPreview) {
+        color = QStringLiteral("#4ade80");  // light green
+        width = 9;
+        background = QStringLiteral("rgba(34, 197, 94, 0.1)");  // slight green tint
+    } else if (m_selected) {
+        color = QStringLiteral("#22c55e");  // green
+        width = 12;
+    } else {
+        color = QStringLiteral("#1e2636");  // grey
+        width = 1;
+    }
+
+    setStyleSheet(QStringLiteral("DeviceTile{border:%1px solid %2; background:%3;}")
                       .arg(width)
-                      .arg(color));
+                      .arg(color)
+                      .arg(background));
 }
 
 void DeviceTile::setTileWidth(int width)
@@ -191,11 +239,17 @@ bool DeviceTile::eventFilter(QObject *watched, QEvent *event)
     }
 
     switch (event->type()) {
-    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonPress: {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::RightButton) {
+            showContextMenu(mouseEvent->globalPosition().toPoint());
+            return true;
+        }
         m_video->setFocus();
         emit clicked(m_serial);
-        emit mouseInput(m_serial, static_cast<QMouseEvent *>(event));
+        emit mouseInput(m_serial, mouseEvent);
         break;
+    }
     case QEvent::MouseButtonRelease:
     case QEvent::MouseMove:
         emit mouseInput(m_serial, static_cast<QMouseEvent *>(event));
@@ -214,4 +268,56 @@ bool DeviceTile::eventFilter(QObject *watched, QEvent *event)
         break;
     }
     return QWidget::eventFilter(watched, event);
+}
+
+void DeviceTile::contextMenuEvent(QContextMenuEvent *event)
+{
+    showContextMenu(event->globalPos());
+}
+
+void DeviceTile::showContextMenu(const QPoint &pos)
+{
+    // Delegate to FarmWindow to handle both single and multi-selection menus
+    emit contextMenuRequested(m_serial, pos);
+}
+
+void DeviceTile::paintEvent(QPaintEvent *event)
+{
+    QWidget::paintEvent(event);
+
+    if (!m_loading) {
+        return;
+    }
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    // Draw GenFarmer-style 4-square spinner in the center of the tile
+    const int centerX = width() / 2;
+    const int centerY = height() / 2;
+    const int squareSize = 18;
+    const int spacing = 6;
+
+    painter.save();
+    painter.translate(centerX, centerY);
+    painter.rotate(m_spinnerRotation);
+
+    // Draw 4 squares in a 2x2 grid
+    QPen pen(QColor(59, 130, 246), 2);  // Blue color (#3b82f6)
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    const int halfSize = squareSize / 2;
+    const int halfSpacing = spacing / 2;
+
+    // Top-left square
+    painter.drawRect(-halfSize - halfSpacing, -halfSize - halfSpacing, squareSize, squareSize);
+    // Top-right square
+    painter.drawRect(halfSpacing, -halfSize - halfSpacing, squareSize, squareSize);
+    // Bottom-left square
+    painter.drawRect(-halfSize - halfSpacing, halfSpacing, squareSize, squareSize);
+    // Bottom-right square
+    painter.drawRect(halfSpacing, halfSpacing, squareSize, squareSize);
+
+    painter.restore();
 }
