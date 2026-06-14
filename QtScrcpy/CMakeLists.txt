@@ -196,6 +196,8 @@ source_group(groupcontroller FILES ${QC_GROUP_CONTROLLER})
 
 # farm (v2.0 device-farm dashboard)
 set(QC_FARM_SOURCES
+    farm/adbcontrollerdialog.h
+    farm/adbcontrollerdialog.cpp
     farm/devicetile.h
     farm/devicetile.cpp
     farm/farmwindow.h
@@ -404,8 +406,32 @@ endif()
 
 add_subdirectory(QtScrcpyCore)
 
+# Add LunaSVG (need to disable /WX for all LunaSVG targets)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../third_party/lunasvg ${CMAKE_CURRENT_BINARY_DIR}/lunasvg)
+
+# Remove /WX from plutovg and lunasvg targets
+if(MSVC)
+    if(TARGET plutovg)
+        get_target_property(PLUTOVG_COMPILE_OPTIONS plutovg COMPILE_OPTIONS)
+        if(PLUTOVG_COMPILE_OPTIONS)
+            list(REMOVE_ITEM PLUTOVG_COMPILE_OPTIONS "/WX")
+            set_target_properties(plutovg PROPERTIES COMPILE_OPTIONS "${PLUTOVG_COMPILE_OPTIONS}")
+        endif()
+        target_compile_options(plutovg PRIVATE /wd4244 /wd4267 /wd4996 /wd4018)
+    endif()
+    if(TARGET lunasvg)
+        get_target_property(LUNASVG_COMPILE_OPTIONS lunasvg COMPILE_OPTIONS)
+        if(LUNASVG_COMPILE_OPTIONS)
+            list(REMOVE_ITEM LUNASVG_COMPILE_OPTIONS "/WX")
+            set_target_properties(lunasvg PROPERTIES COMPILE_OPTIONS "${LUNASVG_COMPILE_OPTIONS}")
+        endif()
+        target_compile_options(lunasvg PRIVATE /wd4244 /wd4267)
+    endif()
+endif()
+
 # Qt
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${LINK_LIBS}
     QtScrcpyCore
+    lunasvg::lunasvg
 )
