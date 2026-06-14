@@ -64,6 +64,7 @@ FocusPanel::FocusPanel(QWidget *parent)
     auto *volDownBtn = addButton(tr("Volume -"));
     auto *powerBtn = addButton(tr("Power"));
     auto *shotBtn = addButton(tr("Screenshot"));
+    auto *adbBtn = addButton(tr("ADB Controller"));
     cv->addStretch(1);
 
     connect(closeBtn, &QPushButton::clicked, this, [this] {
@@ -87,6 +88,9 @@ FocusPanel::FocusPanel(QWidget *parent)
             [this] { sendToTargets([](qsc::IDevice *d) { d->postPower(); }); });
     connect(shotBtn, &QPushButton::clicked, this,
             [this] { sendToTargets([](qsc::IDevice *d) { d->screenshot(); }); });
+    connect(adbBtn, &QPushButton::clicked, this, [this] {
+        emit adbControllerRequested(m_serial);
+    });
 
     auto *root = new QHBoxLayout(this);
     root->setContentsMargins(6, 6, 6, 6);

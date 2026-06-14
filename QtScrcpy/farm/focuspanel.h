@@ -44,6 +44,7 @@ public:
 
 signals:
     void closed(const QString &serial);
+    void adbControllerRequested(const QString &serial);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

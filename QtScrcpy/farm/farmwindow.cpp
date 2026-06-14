@@ -1,4 +1,5 @@
 #include "farmwindow.h"
+#include "adbcontrollerdialog.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,17 +7,23 @@
 
 #include <QCheckBox>
 #include <QCoreApplication>
+#include <QDir>
 #include <QEvent>
 #include <QFileInfo>
+#include <QFont>
 #include <QFrame>
+#include <QGradient>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLinearGradient>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QProcess>
 #include <QPushButton>
 #include <QRandomGenerator>
@@ -27,6 +34,8 @@
 #include <QSlider>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+
+#include <lunasvg.h>
 
 #include "config.h"
 #include "devicetile.h"
@@ -82,7 +91,7 @@ QSlider::sub-page:horizontal { background:#2563eb; border-radius:2px; }
 FarmWindow::FarmWindow(QWidget *parent)
     : QWidget(parent)
 {
-    setWindowTitle(tr("ADB Device Farm — v2.0"));
+    setWindowTitle(tr("333Farmer - v1.0"));
     setStyleSheet(QString::fromUtf8(kStyle));
     loadGroups();
 
@@ -112,6 +121,11 @@ FarmWindow::FarmWindow(QWidget *parent)
         m_focusSerial.clear();
         m_focusPanel->hide();
         relayout();
+    });
+    connect(m_focusPanel, &FocusPanel::adbControllerRequested, this, [this](const QString &serial) {
+        m_selectedSerials.clear();
+        m_selectedSerials.insert(serial);
+        openAdbController();
     });
 
     auto *root = new QHBoxLayout(this);
@@ -144,8 +158,22 @@ QWidget *FarmWindow::buildControlPanel()
     panel->setObjectName("controlPanel");
     panel->setFixedWidth(280);
 
-    auto *title = new QLabel(tr("Control Center"), panel);
+    // Title with icon
+    auto *titleContainer = new QWidget(panel);
+    auto *titleLayout = new QHBoxLayout(titleContainer);
+    titleLayout->setContentsMargins(0, 0, 0, 0);
+    titleLayout->setSpacing(8);
+
+    auto *iconLabel = new QLabel(titleContainer);
+    QPixmap iconPixmap(":/res/QtScrcpy.ico");
+    iconLabel->setPixmap(iconPixmap.scaled(32, 32, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+
+    auto *title = new QLabel(tr("333Farmer"), titleContainer);
     title->setObjectName("panelTitle");
+
+    titleLayout->addWidget(iconLabel);
+    titleLayout->addWidget(title);
+    titleLayout->addStretch();
 
     auto *refreshBtn = new QPushButton(tr("Refresh"), panel);
     auto *mirrorAllBtn = new QPushButton(tr("Mirror All"), panel);
@@ -189,6 +217,12 @@ QWidget *FarmWindow::buildControlPanel()
     smallCtrlCheck->setToolTip(tr("On: tap/drag a grid tile controls that phone.\n"
                                   "Off: the grid is for marquee selection only."));
 
+    auto *keepScreenOnBtn = new QPushButton(tr("Keep Screen On (selected)"), panel);
+    keepScreenOnBtn->setToolTip(tr("Disable auto screen timeout on selected devices"));
+
+    auto *restoreScreenTimeoutBtn = new QPushButton(tr("Restore Screen Timeout (selected)"), panel);
+    restoreScreenTimeoutBtn->setToolTip(tr("Restore default screen timeout (30 seconds)"));
+
     // WiFi
     m_ipEdit = new QLineEdit(panel);
     m_ipEdit->setPlaceholderText(tr("192.168.1.50:5555"));
@@ -209,7 +243,7 @@ QWidget *FarmWindow::buildControlPanel()
     auto *col = new QVBoxLayout(panel);
     col->setContentsMargins(12, 12, 12, 12);
     col->setSpacing(8);
-    col->addWidget(title);
+    col->addWidget(titleContainer);
     col->addWidget(refreshBtn);
     col->addWidget(mirrorAllBtn);
     col->addWidget(stopAllBtn);
@@ -223,6 +257,8 @@ QWidget *FarmWindow::buildControlPanel()
     col->addWidget(sep());
     col->addWidget(smallCtrlCheck);
     col->addWidget(groupCheck);
+    col->addWidget(keepScreenOnBtn);
+    col->addWidget(restoreScreenTimeoutBtn);
     col->addWidget(sep());
     col->addWidget(buildSelectorSection());
     col->addWidget(sep());
@@ -239,6 +275,8 @@ QWidget *FarmWindow::buildControlPanel()
     connect(connectBtn, &QPushButton::clicked, this, &FarmWindow::connectWifi);
     connect(m_ipEdit, &QLineEdit::returnPressed, this, &FarmWindow::connectWifi);
     connect(enableWifiBtn, &QPushButton::clicked, this, &FarmWindow::enableWifiSelected);
+    connect(keepScreenOnBtn, &QPushButton::clicked, this, &FarmWindow::keepScreenOnSelected);
+    connect(restoreScreenTimeoutBtn, &QPushButton::clicked, this, &FarmWindow::restoreScreenTimeoutSelected);
     connect(groupCheck, &QCheckBox::toggled, this, &FarmWindow::setGroupMode);
     connect(smallCtrlCheck, &QCheckBox::toggled, this, &FarmWindow::setSmallViewControl);
 
@@ -1070,6 +1108,10 @@ void FarmWindow::onDeviceConnected(bool success, const QString &serial, const QS
     rebuildNumbering();
 
     updateSelectorStyles();    // mark this device as mirroring in the selector
+
+    // Auto-install 333Farmer Helper APK if not already installed
+    checkAndInstallHelperApk(serial);
+
     pumpConnectQueue();    // a slot just freed up; start the next queued device
 }
 
@@ -1264,6 +1306,13 @@ void FarmWindow::showTileContextMenu(const QString &serial, const QPoint &global
         onTileReloadRequested(serial);
     });
 
+    QAction *adbControllerAction = menu.addAction(tr("ADB Controller"));
+    connect(adbControllerAction, &QAction::triggered, this, [this, serial]() {
+        m_selectedSerials.clear();
+        m_selectedSerials.insert(serial);
+        openAdbController();
+    });
+
     menu.exec(globalPos);
 }
 
@@ -1278,6 +1327,12 @@ void FarmWindow::showMultiSelectContextMenu(const QPoint &globalPos)
             onTileReloadRequested(serial);
         }
     });
+
+    QAction *wallpaperAction = menu.addAction(tr("Set Numbered Wallpaper"));
+    connect(wallpaperAction, &QAction::triggered, this, &FarmWindow::setNumberedWallpapers);
+
+    QAction *adbControllerAction = menu.addAction(tr("ADB Controller"));
+    connect(adbControllerAction, &QAction::triggered, this, &FarmWindow::openAdbController);
 
     menu.exec(globalPos);
 }
@@ -1429,4 +1484,285 @@ QString FarmWindow::serverPath()
         path = QCoreApplication::applicationDirPath() + "/scrcpy-server";
     }
     return path;
+}
+
+void FarmWindow::openAdbController()
+{
+    if (m_selectedSerials.isEmpty()) {
+        m_statusBar->setText(tr("No devices selected."));
+        return;
+    }
+
+    QStringList serials;
+    for (const QString &serial : m_selectedSerials) {
+        serials << serial;
+    }
+
+    auto *dialog = new AdbControllerDialog(serials, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->exec();
+}
+
+void FarmWindow::setNumberedWallpapers()
+{
+    if (m_selectedSerials.isEmpty()) {
+        m_statusBar->setText(tr("No devices selected."));
+        return;
+    }
+
+    m_statusBar->setText(tr("Setting numbered wallpapers..."));
+
+    // Create a temporary directory for wallpapers
+    const QString tempDir = QCoreApplication::applicationDirPath() + "/temp_wallpapers";
+    QDir().mkpath(tempDir);
+
+    for (const QString &serial : m_selectedSerials) {
+        if (!m_numbering.contains(serial)) {
+            continue;
+        }
+
+        const int deviceNumber = m_numbering.value(serial);
+
+        // Generate wallpaper image (1080x1920)
+        QImage wallpaper(1080, 1920, QImage::Format_ARGB32);
+        wallpaper.fill(Qt::black);  // Default black background
+
+        // Load and render the SVG template with LunaSVG
+        const QString svgPath = QCoreApplication::applicationDirPath() + "/wallpaper_template.svg";
+        auto document = lunasvg::Document::loadFromFile(svgPath.toStdString());
+
+        if (document) {
+            // Render SVG to bitmap at 1080x1920
+            auto bitmap = document->renderToBitmap(1080, 1920);
+
+            if (bitmap.valid()) {
+                // Convert LunaSVG bitmap to QImage
+                // LunaSVG uses RGBA format
+                QImage svgImage(bitmap.data(), static_cast<int>(bitmap.width()),
+                               static_cast<int>(bitmap.height()),
+                               static_cast<int>(bitmap.stride()),
+                               QImage::Format_RGBA8888);
+
+                // Copy SVG image to wallpaper
+                QPainter basePainter(&wallpaper);
+                basePainter.drawImage(0, 0, svgImage);
+                basePainter.end();
+            }
+        }
+
+        // Draw number at the top (above the phone illustration)
+        QPainter painter(&wallpaper);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::white);
+        QFont numberFont("Arial", 200, QFont::Black);
+        painter.setFont(numberFont);
+
+        // Position the number in the upper portion (Y: 350-550)
+        QRect numberRect(0, 350, 1080, 200);
+        painter.drawText(numberRect, Qt::AlignCenter, QString::number(deviceNumber));
+        painter.end();
+
+        // Save wallpaper
+        const QString wallpaperPath = tempDir + QString("/wallpaper_%1.png").arg(deviceNumber);
+        wallpaper.save(wallpaperPath, "PNG");
+
+        // Use dd to pipe the image directly to the wallpaper setter
+        // This works on all Android versions without needing storage permissions
+        QProcess *setProcess = new QProcess(this);
+
+        connect(setProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, serial, deviceNumber, setProcess](int exitCode, QProcess::ExitStatus status) {
+            if (status == QProcess::NormalExit && exitCode == 0) {
+                qDebug() << "Wallpaper set successfully for device" << deviceNumber << "serial:" << serial;
+            } else {
+                const QString error = QString::fromUtf8(setProcess->readAllStandardError());
+                qDebug() << "Failed to set wallpaper for device" << deviceNumber << "error:" << error;
+            }
+            setProcess->deleteLater();
+        });
+
+        // Method: push file then use WallpaperManager via shell
+        const QString remotePath = QString("/sdcard/gf_wp_%1.png").arg(deviceNumber);
+
+        QProcess *pushProcess = new QProcess(this);
+        connect(pushProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, serial, remotePath, setProcess, pushProcess](int exitCode, QProcess::ExitStatus status) {
+            pushProcess->deleteLater();
+
+            if (status != QProcess::NormalExit || exitCode != 0) {
+                qDebug() << "Failed to push wallpaper to" << serial;
+                setProcess->deleteLater();
+                return;
+            }
+
+            // Copy to app's accessible directory then use helper
+            const QString appPath = "/sdcard/Android/data/com.farmer333.wallpaperhelper/files/wallpaper.png";
+
+            QProcess *copyProcess = new QProcess(this);
+            connect(copyProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    this, [this, serial, appPath, setProcess, copyProcess](int exitCode, QProcess::ExitStatus status) {
+                copyProcess->deleteLater();
+
+                // Try to use helper APK
+                setProcess->setProgram("adb");
+                setProcess->setArguments(QStringList()
+                    << "-s" << serial
+                    << "shell"
+                    << "am" << "start"
+                    << "-n" << "com.farmer333.wallpaperhelper/.SetWallpaperActivity"
+                    << "-e" << "file" << appPath);
+                setProcess->start();
+            });
+
+            // Create directory and copy file
+            copyProcess->setProgram("adb");
+            copyProcess->setArguments(QStringList()
+                << "-s" << serial
+                << "shell"
+                << QString("mkdir -p /sdcard/Android/data/com.farmer333.wallpaperhelper/files && cp %1 %2")
+                    .arg(remotePath, appPath));
+            copyProcess->start();
+        });
+
+        pushProcess->setProgram("adb");
+        pushProcess->setArguments(QStringList()
+            << "-s" << serial
+            << "push"
+            << wallpaperPath
+            << remotePath);
+        pushProcess->start();
+    }
+
+    m_statusBar->setText(tr("Wallpapers set for %1 devices").arg(m_selectedSerials.size()));
+}
+
+void FarmWindow::checkAndInstallHelperApk(const QString &serial)
+{
+    // Check if the helper APK is already installed
+    QProcess *checkProcess = new QProcess(this);
+
+    connect(checkProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, serial, checkProcess](int exitCode, QProcess::ExitStatus status) {
+        checkProcess->deleteLater();
+
+        if (status != QProcess::NormalExit) {
+            return;
+        }
+
+        const QString output = QString::fromUtf8(checkProcess->readAllStandardOutput());
+
+        // If package is found, output contains "package:com.farmer333.wallpaperhelper"
+        if (output.contains("com.farmer333.wallpaperhelper")) {
+            qDebug() << "333Farmer Helper APK already installed on" << serial;
+            return;
+        }
+
+        // APK not found, install it
+        qDebug() << "Installing 333Farmer Helper APK on" << serial;
+        m_statusBar->setText(tr("Installing 333Farmer Helper on %1...").arg(serial));
+
+        const QString apkPath = QCoreApplication::applicationDirPath() + "/333FarmerWallpaperHelper.apk";
+
+        QProcess *installProcess = new QProcess(this);
+        connect(installProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, serial, installProcess](int exitCode, QProcess::ExitStatus status) {
+            installProcess->deleteLater();
+
+            if (status == QProcess::NormalExit && exitCode == 0) {
+                qDebug() << "333Farmer Helper APK installed successfully on" << serial;
+                m_statusBar->setText(tr("333Farmer Helper installed on %1").arg(serial));
+            } else {
+                const QString error = QString::fromUtf8(installProcess->readAllStandardError());
+                qDebug() << "Failed to install 333Farmer Helper APK on" << serial << "error:" << error;
+            }
+        });
+
+        installProcess->setProgram("adb");
+        installProcess->setArguments(QStringList()
+            << "-s" << serial
+            << "install"
+            << "-r"  // replace existing
+            << apkPath);
+        installProcess->start();
+    });
+
+    checkProcess->setProgram("adb");
+    checkProcess->setArguments(QStringList()
+        << "-s" << serial
+        << "shell"
+        << "pm" << "list" << "packages"
+        << "com.farmer333.wallpaperhelper");
+    checkProcess->start();
+}
+
+void FarmWindow::keepScreenOnSelected()
+{
+    if (m_selectedSerials.isEmpty()) {
+        m_statusBar->setText(tr("No devices selected."));
+        return;
+    }
+
+    m_statusBar->setText(tr("Setting screen timeout to never on %1 device(s)...").arg(m_selectedSerials.size()));
+
+    for (const QString &serial : m_selectedSerials) {
+        QProcess *process = new QProcess(this);
+
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, serial, process](int exitCode, QProcess::ExitStatus status) {
+            process->deleteLater();
+
+            if (status == QProcess::NormalExit && exitCode == 0) {
+                qDebug() << "Screen timeout disabled on" << serial;
+            } else {
+                const QString error = QString::fromUtf8(process->readAllStandardError());
+                qDebug() << "Failed to disable screen timeout on" << serial << "error:" << error;
+            }
+        });
+
+        // Set screen timeout to maximum (2147483647 milliseconds = ~24 days, effectively never)
+        process->setProgram("adb");
+        process->setArguments(QStringList()
+            << "-s" << serial
+            << "shell"
+            << "settings" << "put" << "system" << "screen_off_timeout" << "2147483647");
+        process->start();
+    }
+
+    m_statusBar->setText(tr("Screen timeout set to never on %1 device(s)").arg(m_selectedSerials.size()));
+}
+
+void FarmWindow::restoreScreenTimeoutSelected()
+{
+    if (m_selectedSerials.isEmpty()) {
+        m_statusBar->setText(tr("No devices selected."));
+        return;
+    }
+
+    m_statusBar->setText(tr("Restoring screen timeout on %1 device(s)...").arg(m_selectedSerials.size()));
+
+    for (const QString &serial : m_selectedSerials) {
+        QProcess *process = new QProcess(this);
+
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, serial, process](int exitCode, QProcess::ExitStatus status) {
+            process->deleteLater();
+
+            if (status == QProcess::NormalExit && exitCode == 0) {
+                qDebug() << "Screen timeout restored on" << serial;
+            } else {
+                const QString error = QString::fromUtf8(process->readAllStandardError());
+                qDebug() << "Failed to restore screen timeout on" << serial << "error:" << error;
+            }
+        });
+
+        // Restore default screen timeout (30 seconds = 30000 milliseconds)
+        process->setProgram("adb");
+        process->setArguments(QStringList()
+            << "-s" << serial
+            << "shell"
+            << "settings" << "put" << "system" << "screen_off_timeout" << "30000");
+        process->start();
+    }
+
+    m_statusBar->setText(tr("Screen timeout restored on %1 device(s)").arg(m_selectedSerials.size()));
 }

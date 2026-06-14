@@ -55,6 +55,8 @@ private slots:
     void stopAll();
     void connectWifi();
     void enableWifiSelected();
+    void keepScreenOnSelected();
+    void restoreScreenTimeoutSelected();
     void setTileSize(int width);
     void setHostSize(int height);
     void setQuality(int maxSize);
@@ -72,6 +74,9 @@ private slots:
     void onTileKey(const QString &serial, QKeyEvent *event);
     void onTileReloadRequested(const QString &serial);
     void onTileContextMenuRequested(const QString &serial, const QPoint &globalPos);
+    void openAdbController();
+    void setNumberedWallpapers();
+    void checkAndInstallHelperApk(const QString &serial);
 
 private:
     QWidget *buildControlPanel();
