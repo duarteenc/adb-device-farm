@@ -63,8 +63,10 @@ FocusPanel::FocusPanel(QWidget *parent)
     auto *volUpBtn = addButton(tr("Volume +"));
     auto *volDownBtn = addButton(tr("Volume -"));
     auto *powerBtn = addButton(tr("Power"));
+    auto *rotateBtn = addButton(tr("Rotar"));
     auto *shotBtn = addButton(tr("Screenshot"));
     auto *adbBtn = addButton(tr("ADB Controller"));
+    auto *installApkBtn = addButton(tr("Instalar APK"));
     cv->addStretch(1);
 
     connect(closeBtn, &QPushButton::clicked, this, [this] {
@@ -86,10 +88,15 @@ FocusPanel::FocusPanel(QWidget *parent)
             [this] { sendToTargets([](qsc::IDevice *d) { d->postVolumeDown(); }); });
     connect(powerBtn, &QPushButton::clicked, this,
             [this] { sendToTargets([](qsc::IDevice *d) { d->postPower(); }); });
+    connect(rotateBtn, &QPushButton::clicked, this,
+            [this] { sendToTargets([](qsc::IDevice *d) { d->postRotate(); }); });
     connect(shotBtn, &QPushButton::clicked, this,
             [this] { sendToTargets([](qsc::IDevice *d) { d->screenshot(); }); });
     connect(adbBtn, &QPushButton::clicked, this, [this] {
         emit adbControllerRequested(m_serial);
+    });
+    connect(installApkBtn, &QPushButton::clicked, this, [this] {
+        emit installApkRequested(m_serial);
     });
 
     auto *root = new QHBoxLayout(this);
@@ -259,6 +266,15 @@ bool FocusPanel::eventFilter(QObject *watched, QEvent *event)
     case QEvent::KeyPress:
     case QEvent::KeyRelease: {
         auto *ke = static_cast<QKeyEvent *>(event);
+        // Ctrl+V pastes the PC clipboard (push host clipboard + paste, like
+        // scrcpy) instead of forwarding the raw V keycode, which would paste the
+        // device's own clipboard.
+        if ((ke->modifiers() & Qt::ControlModifier) && ke->key() == Qt::Key_V) {
+            if (ke->type() == QEvent::KeyPress) {
+                sendToTargets([](qsc::IDevice *d) { d->setDeviceClipboard(true); });
+            }
+            break;
+        }
         sendToTargets([&](qsc::IDevice *d) { d->keyEvent(ke, frameSize, showSize); });
         break;
     }

@@ -46,7 +46,22 @@ DeviceTile::DeviceTile(const QString &serial, QWidget *parent)
     m_fpsLabel = new QLabel(m_overlay);
     m_fpsLabel->setObjectName("tileFps");
     m_fpsLabel->setAlignment(Qt::AlignRight | Qt::AlignTop);
-    for (QLabel *l : {m_numLabel, m_modelLabel, m_ipLabel, m_fpsLabel}) {
+
+    // Connection-type badge: USB devices have a plain serial; WiFi/TCP ones are
+    // "ip:port". Colour-coded so the two are distinguishable at a glance.
+    const bool isWifi = m_serial.contains(':');
+    m_connBadge = new QLabel(m_overlay);
+    m_connBadge->setObjectName("tileConn");
+    m_connBadge->setAlignment(Qt::AlignCenter);
+    m_connBadge->setText(isWifi ? tr("WiFi") : tr("USB"));
+    m_connBadge->setStyleSheet(
+        isWifi
+            ? QStringLiteral("background:#2563eb; color:#ffffff; font-size:9px; "
+                             "font-weight:bold; border-radius:3px; padding:1px 4px;")
+            : QStringLiteral("background:#f59e0b; color:#1a1206; font-size:9px; "
+                             "font-weight:bold; border-radius:3px; padding:1px 4px;"));
+
+    for (QLabel *l : {m_numLabel, m_modelLabel, m_ipLabel, m_fpsLabel, m_connBadge}) {
         l->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     }
 
@@ -54,6 +69,7 @@ DeviceTile::DeviceTile(const QString &serial, QWidget *parent)
     og->setContentsMargins(6, 3, 6, 5);
     og->setHorizontalSpacing(4);
     og->setVerticalSpacing(0);
+    og->addWidget(m_connBadge, 0, 0, Qt::AlignLeft | Qt::AlignTop);
     og->addWidget(m_numLabel, 0, 1, Qt::AlignCenter);
     og->addWidget(m_fpsLabel, 0, 2);
     og->addWidget(m_modelLabel, 1, 0, 1, 3);

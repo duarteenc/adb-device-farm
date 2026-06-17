@@ -72,6 +72,7 @@ public:
     virtual void installApkRequest(const QString &apkFile) { Q_UNUSED(apkFile); }
     virtual void screenshot() {}
     virtual void showTouch(bool show) { Q_UNUSED(show); }
+    virtual void postRotate() {}
 };
 
 class IDevice : public QObject {
@@ -122,6 +123,7 @@ public:
 
     virtual void screenshot() = 0;
     virtual void showTouch(bool show) = 0;
+    virtual void postRotate() = 0;
 
     virtual bool isReversePort(quint16 port) = 0;
     virtual const QString &getSerial() = 0;

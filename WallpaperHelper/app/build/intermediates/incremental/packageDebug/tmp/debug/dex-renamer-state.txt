@@ -1,0 +1,7 @@
+#Sun Jun 14 03:30:24 BOT 2026
+base.0=C\:\\adb-device-farm\\WallpaperHelper\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\0\\classes.dex
+base.1=C\:\\adb-device-farm\\WallpaperHelper\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\6\\classes.dex
+path.0=0/classes.dex
+path.1=6/classes.dex
+renamed.0=classes.dex
+renamed.1=classes2.dex

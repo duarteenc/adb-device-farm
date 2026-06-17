@@ -75,6 +75,11 @@ private slots:
     void onTileReloadRequested(const QString &serial);
     void onTileContextMenuRequested(const QString &serial, const QPoint &globalPos);
     void openAdbController();
+    void openAdbController(const QStringList &serials);
+    void openInstallApk(const QString &serial);
+    void openDevicesDialog();
+    void restartDevice(const QString &serial);
+    void pollRebootedDevice(const QString &serial);
     void setNumberedWallpapers();
     void checkAndInstallHelperApk(const QString &serial);
 
@@ -114,6 +119,7 @@ private:
     QStringList m_pending;             // serials waiting to connect
     QSet<QString> m_connecting;        // serials currently establishing
     QSet<QString> m_reloading;         // serials being reloaded (keep tile alive)
+    QHash<QString, int> m_rebootWait;  // serial -> poll attempts while rebooting
     QString m_selected;
     QString m_focusSerial;             // device shown in the embedded host panel
     QString m_wifiSerial;

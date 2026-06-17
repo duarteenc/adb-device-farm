@@ -1,8 +1,11 @@
 #include "farmwindow.h"
 #include "adbcontrollerdialog.h"
+#include "devicesdialog.h"
+#include "installapkdialog.h"
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <utility>
 
 #include <QCheckBox>
@@ -32,6 +35,7 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -42,6 +46,17 @@
 #include "focuspanel.h"
 
 namespace {
+// Resolve a usable adb binary. Config's path is empty by default; the core
+// instead bundles adb.exe next to the executable, so fall back to that.
+QString resolveAdbPath()
+{
+    QString path = Config::getInstance().getAdbPath();
+    if (path.isEmpty()) {
+        path = QCoreApplication::applicationDirPath() + "/adb.exe";
+    }
+    return path;
+}
+
 constexpr int kGridSpacing = 10;
 constexpr int kGridMargin = 12;
 constexpr int kMinTileWidth = 160;    // floor: phones unreadable below this
@@ -123,10 +138,19 @@ FarmWindow::FarmWindow(QWidget *parent)
         relayout();
     });
     connect(m_focusPanel, &FocusPanel::adbControllerRequested, this, [this](const QString &serial) {
-        m_selectedSerials.clear();
-        m_selectedSerials.insert(serial);
-        openAdbController();
+        // Target the host first, then any other selected devices (don't clobber
+        // the user's selection — match the host's broadcast set).
+        QStringList targets;
+        targets << serial;
+        for (const QString &s : m_order) {
+            if (s != serial && m_selectedSerials.contains(s)) {
+                targets << s;
+            }
+        }
+        openAdbController(targets);
     });
+    connect(m_focusPanel, &FocusPanel::installApkRequested, this,
+            &FarmWindow::openInstallApk);
 
     auto *root = new QHBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -176,6 +200,7 @@ QWidget *FarmWindow::buildControlPanel()
     titleLayout->addStretch();
 
     auto *refreshBtn = new QPushButton(tr("Refresh"), panel);
+    auto *devicesBtn = new QPushButton(tr("⁙ Dispositivos"), panel);
     auto *mirrorAllBtn = new QPushButton(tr("Mirror All"), panel);
     mirrorAllBtn->setObjectName("primary");
     auto *stopAllBtn = new QPushButton(tr("Stop All"), panel);
@@ -245,6 +270,7 @@ QWidget *FarmWindow::buildControlPanel()
     col->setSpacing(8);
     col->addWidget(titleContainer);
     col->addWidget(refreshBtn);
+    col->addWidget(devicesBtn);
     col->addWidget(mirrorAllBtn);
     col->addWidget(stopAllBtn);
     col->addWidget(sep());
@@ -270,6 +296,7 @@ QWidget *FarmWindow::buildControlPanel()
     col->addWidget(m_statusBar);
 
     connect(refreshBtn, &QPushButton::clicked, this, &FarmWindow::refreshDevices);
+    connect(devicesBtn, &QPushButton::clicked, this, &FarmWindow::openDevicesDialog);
     connect(mirrorAllBtn, &QPushButton::clicked, this, &FarmWindow::mirrorAll);
     connect(stopAllBtn, &QPushButton::clicked, this, &FarmWindow::stopAll);
     connect(connectBtn, &QPushButton::clicked, this, &FarmWindow::connectWifi);
@@ -737,6 +764,7 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
                     m_selectedSerials.clear();
                     m_selectorCurrentDragSelection.clear();
                     updateSelectorStyles();
+                    updateTileSelectionStyles();
                 }
                 if (m_selectorDragging) {
                     m_selectorRubberBand->setGeometry(QRect(m_selectorRubberOrigin, p).normalized());
@@ -754,6 +782,7 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
                         m_selectorCurrentDragSelection = newSelection;
                         m_selectedSerials = newSelection;
                         updateSelectorStyles();
+                        updateTileSelectionStyles();
                     }
                 }
             }
@@ -1048,7 +1077,7 @@ bool FarmWindow::startConnect(const QString &serial)
     // Normalize resolution/density BEFORE scrcpy captures, so every phone streams
     // and accepts control at the same coordinate space (mixed native resolutions
     // otherwise make broadcast input land in the wrong place on some models).
-    const QString adb = Config::getInstance().getAdbPath();
+    const QString adb = resolveAdbPath();
     QProcess::execute(adb, {"-s", serial, "shell",
                             QStringLiteral("wm size %1 ; wm density %2")
                                 .arg(QLatin1String(kNormalizedSize), QLatin1String(kNormalizedDensity))});
@@ -1253,6 +1282,22 @@ void FarmWindow::onTileKey(const QString &serial, QKeyEvent *event)
     if (!src) {
         return;
     }
+
+    // Ctrl+V pastes the PC clipboard into the device (push host clipboard +
+    // paste, like scrcpy). Forwarding the raw V keycode would instead paste the
+    // *device's* own clipboard, which is why plain Ctrl+V never worked.
+    if ((event->modifiers() & Qt::ControlModifier) && event->key() == Qt::Key_V) {
+        if (event->type() == QEvent::KeyPress) {
+            for (const QString &target : inputTargets(serial)) {
+                auto device = qsc::IDeviceManage::getInstance().getDevice(target);
+                if (device) {
+                    device->setDeviceClipboard(true);
+                }
+            }
+        }
+        return;    // swallow the keycode so it isn't double-handled
+    }
+
     const QSize showSize = src->videoShowSize();
     for (const QString &target : inputTargets(serial)) {
         auto device = qsc::IDeviceManage::getInstance().getDevice(target);
@@ -1308,9 +1353,7 @@ void FarmWindow::showTileContextMenu(const QString &serial, const QPoint &global
 
     QAction *adbControllerAction = menu.addAction(tr("ADB Controller"));
     connect(adbControllerAction, &QAction::triggered, this, [this, serial]() {
-        m_selectedSerials.clear();
-        m_selectedSerials.insert(serial);
-        openAdbController();
+        openAdbController(QStringList{serial});
     });
 
     menu.exec(globalPos);
@@ -1332,7 +1375,7 @@ void FarmWindow::showMultiSelectContextMenu(const QPoint &globalPos)
     connect(wallpaperAction, &QAction::triggered, this, &FarmWindow::setNumberedWallpapers);
 
     QAction *adbControllerAction = menu.addAction(tr("ADB Controller"));
-    connect(adbControllerAction, &QAction::triggered, this, &FarmWindow::openAdbController);
+    connect(adbControllerAction, &QAction::triggered, this, [this]() { openAdbController(); });
 
     menu.exec(globalPos);
 }
@@ -1423,6 +1466,18 @@ DeviceTile *FarmWindow::ensureTile(const QString &serial)
 
 void FarmWindow::removeTile(const QString &serial)
 {
+    // While a device is rebooting we keep its tile alive (showing "rebooting…")
+    // even if a transient reconnect attempt fails — the poll loop owns its fate.
+    if (m_rebootWait.contains(serial)) {
+        DeviceTile *tile = m_tiles.value(serial, nullptr);
+        if (tile) {
+            tile->setStatusText(tr("rebooting…"));
+            tile->setLoading(true);
+        }
+        m_connecting.remove(serial);
+        return;
+    }
+
     auto it = m_tiles.find(serial);
     if (it == m_tiles.end()) {
         return;
@@ -1488,19 +1543,232 @@ QString FarmWindow::serverPath()
 
 void FarmWindow::openAdbController()
 {
-    if (m_selectedSerials.isEmpty()) {
+    QStringList serials;
+    for (const QString &s : m_order) {
+        if (m_selectedSerials.contains(s)) {
+            serials << s;
+        }
+    }
+    openAdbController(serials);
+}
+
+void FarmWindow::openAdbController(const QStringList &serials)
+{
+    if (serials.isEmpty()) {
         m_statusBar->setText(tr("No devices selected."));
         return;
-    }
-
-    QStringList serials;
-    for (const QString &serial : m_selectedSerials) {
-        serials << serial;
     }
 
     auto *dialog = new AdbControllerDialog(serials, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->exec();
+}
+
+void FarmWindow::openInstallApk(const QString &serial)
+{
+    // Install onto the broadcast set (host + selection / group), like the other
+    // host-panel actions. Build numbered (serial, number) chips for the dialog.
+    const QList<QString> targets = inputTargets(serial);
+    QList<QPair<QString, int>> chips;
+    for (const QString &t : targets) {
+        chips.append({t, m_numbering.value(t, 0)});
+    }
+
+    InstallApkDialog dialog(chips, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const QString apk = dialog.apkPath();
+    int sent = 0;
+    for (const QString &t : targets) {
+        auto device = qsc::IDeviceManage::getInstance().getDevice(t);
+        if (device) {
+            device->installApkRequest(apk);
+            ++sent;
+        }
+    }
+    m_statusBar->setText(tr("Installing APK on %1 device(s)…").arg(sent));
+}
+
+void FarmWindow::openDevicesDialog()
+{
+    auto *dialog = new DevicesDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    QList<DeviceInfo> devices;
+    for (const QString &serial : m_order) {
+        if (!m_available.contains(serial)) {
+            continue;
+        }
+
+        DeviceInfo info;
+        info.serial = serial;
+        info.index = m_numbering.value(serial, 0);
+        info.connected = (qsc::IDeviceManage::getInstance().getDevice(serial) != nullptr);
+
+        DeviceTile *tile = m_tiles.value(serial, nullptr);
+        if (tile && !tile->model().isEmpty()) {
+            info.model = tile->model();
+        } else {
+            info.model = serial.split(":").first();
+        }
+        info.ipPort = serial;
+
+        devices.append(info);
+    }
+
+    dialog->setDevices(devices);
+
+    connect(dialog, &DevicesDialog::refreshRequested, this, &FarmWindow::refreshDevices);
+    connect(dialog, &DevicesDialog::restartAdbRequested, this, [this]() {
+        m_adb.execute("", QStringList() << "kill-server");
+        m_adb.execute("", QStringList() << "start-server");
+        refreshDevices();
+    });
+    connect(dialog, &DevicesDialog::restartDeviceRequested, this, [this](const QString &serial) {
+        restartDevice(serial);
+    });
+    connect(dialog, &DevicesDialog::connectDeviceRequested, this, [this](const QString &serial) {
+        if (!m_pending.contains(serial) && !m_connecting.contains(serial)) {
+            m_pending.append(serial);
+            pumpConnectQueue();
+        }
+    });
+    connect(dialog, &DevicesDialog::disconnectDeviceRequested, this, [this](const QString &serial) {
+        qsc::IDeviceManage::getInstance().disconnectDevice(serial);
+        removeTile(serial);
+    });
+
+    dialog->exec();
+}
+
+void FarmWindow::restartDevice(const QString &serial)
+{
+    // Reboot the phone but keep its tile on the grid: mark it reloading so
+    // onDeviceDisconnected won't drop the tile when the connection dies, then
+    // poll until the device boots back up and reconnect the mirror automatically.
+    m_reloading.insert(serial);
+
+    DeviceTile *tile = ensureTile(serial);
+    tile->setStatusText(tr("rebooting…"));
+    tile->setLoading(true);
+
+    // Tear down the live mirror cleanly before rebooting.
+    auto device = qsc::IDeviceManage::getInstance().getDevice(serial);
+    if (device) {
+        device->deRegisterDeviceObserver(tile);
+        qsc::IDeviceManage::getInstance().disconnectDevice(serial);
+    }
+    m_connecting.remove(serial);
+    m_pending.removeAll(serial);
+
+    // Fire-and-forget so the UI thread never blocks on the reboot command.
+    QProcess::startDetached(resolveAdbPath(), {"-s", serial, "reboot"});
+    m_statusBar->setText(tr("rebooting %1…").arg(serial));
+
+    // Wait a fixed grace period before polling: by then the phone is definitely
+    // past shutdown, so a "boot_completed=1" reading means the *new* boot (not a
+    // stale flag from before the reboot). We don't try to detect the "offline"
+    // window — adb auto-reconnects WiFi devices and that window is easy to miss.
+    m_rebootWait[serial] = 0;
+    QTimer::singleShot(15000, this, [this, serial]() { pollRebootedDevice(serial); });
+}
+
+void FarmWindow::pollRebootedDevice(const QString &serial)
+{
+    // Aborted (tile gone / no longer tracked) — stop polling.
+    if (!m_rebootWait.contains(serial) || !m_tiles.contains(serial)) {
+        m_rebootWait.remove(serial);
+        return;
+    }
+
+    // Mirror is live again — done.
+    if (qsc::IDeviceManage::getInstance().getDevice(serial) != nullptr) {
+        m_rebootWait.remove(serial);
+        m_reloading.remove(serial);
+        return;
+    }
+
+    constexpr int kMaxPolls = 60;          // ~3 min at 3s intervals (after the 15s grace)
+    constexpr int kPollIntervalMs = 3000;
+
+    int attempts = m_rebootWait.value(serial, 0);
+    if (attempts >= kMaxPolls) {
+        // Gave up waiting — drop the tile.
+        m_rebootWait.remove(serial);     // must clear before removeTile (which guards on it)
+        m_reloading.remove(serial);
+        DeviceTile *tile = m_tiles.value(serial, nullptr);
+        if (tile) {
+            tile->setLoading(false);
+        }
+        removeTile(serial);
+        m_statusBar->setText(tr("%1 did not come back after reboot").arg(serial));
+        return;
+    }
+    m_rebootWait[serial] = attempts + 1;
+
+    const QString adb = resolveAdbPath();
+
+    // Runs an adb command asynchronously (never blocks the UI thread) and calls
+    // cb with the trimmed stdout. A watchdog kills a process that hangs so the
+    // chain always makes progress.
+    auto runAdbAsync = [this](const QString &adbPath, const QStringList &args,
+                              int timeoutMs, std::function<void(QString)> cb) {
+        auto *proc = new QProcess(this);
+        connect(proc, &QProcess::finished, this,
+                [proc, cb](int, QProcess::ExitStatus) {
+                    const QString out = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+                    proc->deleteLater();
+                    cb(out);
+                });
+        connect(proc, &QProcess::errorOccurred, this,
+                [proc, cb](QProcess::ProcessError) {
+                    proc->deleteLater();
+                    cb(QString());
+                });
+        auto *killer = new QTimer(proc);
+        killer->setSingleShot(true);
+        connect(killer, &QTimer::timeout, proc, [proc]() {
+            if (proc->state() == QProcess::Running) {
+                proc->kill();
+            }
+        });
+        killer->start(timeoutMs);
+        proc->start(adbPath, args);
+    };
+
+    // Schedules the next watchdog tick (only after the current async work ends).
+    auto scheduleNext = [this, serial, kPollIntervalMs]() {
+        QTimer::singleShot(kPollIntervalMs, this, [this, serial]() { pollRebootedDevice(serial); });
+    };
+
+    // Step 2: check whether Android finished booting, then reconnect if so.
+    auto checkBoot = [this, serial, adb, runAdbAsync, scheduleNext]() {
+        runAdbAsync(adb, {"-s", serial, "shell", "getprop", "sys.boot_completed"}, 4000,
+                    [this, serial, scheduleNext](const QString &booted) {
+            if (booted == QLatin1String("1")) {
+                m_reloading.insert(serial);    // keep the tile through the reconnect
+                if (!m_pending.contains(serial) && !m_connecting.contains(serial)) {
+                    m_pending.append(serial);
+                    pumpConnectQueue();
+                }
+                m_statusBar->setText(tr("%1 back online — reconnecting").arg(serial));
+            } else {
+                m_statusBar->setText(tr("waiting for %1 to finish booting…").arg(serial));
+            }
+            scheduleNext();    // watchdog: keep polling until mirror is live or timeout
+        });
+    };
+
+    // Step 1: WiFi devices lose their adb TCP session on reboot — re-establish it
+    // first (result ignored), then check the boot state.
+    if (serial.contains(':')) {
+        runAdbAsync(adb, {"connect", serial}, 5000,
+                    [checkBoot](const QString &) { checkBoot(); });
+    } else {
+        checkBoot();
+    }
 }
 
 void FarmWindow::setNumberedWallpapers()

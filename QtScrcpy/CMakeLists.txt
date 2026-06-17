@@ -198,12 +198,16 @@ source_group(groupcontroller FILES ${QC_GROUP_CONTROLLER})
 set(QC_FARM_SOURCES
     farm/adbcontrollerdialog.h
     farm/adbcontrollerdialog.cpp
+    farm/devicesdialog.h
+    farm/devicesdialog.cpp
     farm/devicetile.h
     farm/devicetile.cpp
     farm/farmwindow.h
     farm/farmwindow.cpp
     farm/focuspanel.h
     farm/focuspanel.cpp
+    farm/installapkdialog.h
+    farm/installapkdialog.cpp
 )
 source_group(farm FILES ${QC_FARM_SOURCES})
 

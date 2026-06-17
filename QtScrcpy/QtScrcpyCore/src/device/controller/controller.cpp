@@ -141,6 +141,15 @@ void Controller::collapsePanel()
     postControlMsg(controlMsg);
 }
 
+void Controller::rotateDevice()
+{
+    ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_ROTATE_DEVICE);
+    if (!controlMsg) {
+        return;
+    }
+    postControlMsg(controlMsg);
+}
+
 void Controller::requestDeviceClipboard()
 {
     ControlMsg *controlMsg = new ControlMsg(ControlMsg::CMT_GET_CLIPBOARD);

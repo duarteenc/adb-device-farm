@@ -45,6 +45,7 @@ public:
 signals:
     void closed(const QString &serial);
     void adbControllerRequested(const QString &serial);
+    void installApkRequested(const QString &serial);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

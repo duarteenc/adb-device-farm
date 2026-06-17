@@ -34,6 +34,7 @@ public:
     ~DeviceTile() override;
 
     const QString &serial() const { return m_serial; }
+    const QString &model() const { return m_model; }
     void setNumber(int number);
     void setModel(const QString &model);
     void setStatusText(const QString &text);
@@ -95,6 +96,7 @@ private:
     QLabel *m_modelLabel = nullptr;
     QLabel *m_ipLabel = nullptr;
     QLabel *m_fpsLabel = nullptr;
+    QLabel *m_connBadge = nullptr;    // "USB" / "WiFi" connection-type badge
     QPropertyAnimation *m_spinnerAnimation = nullptr;
 };
 

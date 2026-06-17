@@ -1,0 +1,8 @@
+com.farmer333.wallpaperhelper.app-pngs-0 C:\adb-device-farm\WallpaperHelper\app\build\generated\res\pngs\debug
+com.farmer333.wallpaperhelper.app-resValues-1 C:\adb-device-farm\WallpaperHelper\app\build\generated\res\resValues\debug
+com.farmer333.wallpaperhelper.app-rs-2 C:\adb-device-farm\WallpaperHelper\app\build\generated\res\rs\debug
+com.farmer333.wallpaperhelper.app-packageDebugResources-3 C:\adb-device-farm\WallpaperHelper\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.farmer333.wallpaperhelper.app-packageDebugResources-4 C:\adb-device-farm\WallpaperHelper\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.farmer333.wallpaperhelper.app-merged_res-5 C:\adb-device-farm\WallpaperHelper\app\build\intermediates\merged_res\debug
+com.farmer333.wallpaperhelper.app-debug-6 C:\adb-device-farm\WallpaperHelper\app\src\debug\res
+com.farmer333.wallpaperhelper.app-main-7 C:\adb-device-farm\WallpaperHelper\app\src\main\res

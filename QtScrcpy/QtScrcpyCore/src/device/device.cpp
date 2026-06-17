@@ -489,6 +489,18 @@ void Device::collapsePanel()
     }
 }
 
+void Device::postRotate()
+{
+    if (!m_controller) {
+        return;
+    }
+    m_controller->rotateDevice();
+
+    for (const auto& item : m_deviceObservers) {
+        item->postRotate();
+    }
+}
+
 void Device::postBackOrScreenOn(bool down)
 {
     if (!m_controller) {

@@ -67,6 +67,7 @@ public:
 
     void screenshot() override;
     void showTouch(bool show) override;
+    void postRotate() override;
 
     bool isReversePort(quint16 port) override;
     const QString &getSerial() override;

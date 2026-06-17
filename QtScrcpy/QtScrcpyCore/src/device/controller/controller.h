@@ -37,6 +37,7 @@ public:
     void expandNotificationPanel();
     void collapsePanel();
     void setDisplayPower(bool on);
+    void rotateDevice();
 
     // for input convert
     void mouseEvent(const QMouseEvent *from, const QSize &frameSize, const QSize &showSize);

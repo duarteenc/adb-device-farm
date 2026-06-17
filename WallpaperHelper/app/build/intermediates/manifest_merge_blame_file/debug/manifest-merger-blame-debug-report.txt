@@ -1,0 +1,55 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.farmer333.wallpaperhelper"
+4    android:versionCode="1"
+5    android:versionName="1.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="21"
+8-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml
+9        android:targetSdkVersion="33" />
+9-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml
+10
+11    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+11-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:4:5-72
+11-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:4:22-69
+12    <uses-permission
+12-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:5:5-6:38
+13        android:name="android.permission.READ_EXTERNAL_STORAGE"
+13-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:5:22-77
+14        android:maxSdkVersion="32" />
+14-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:6:9-35
+15
+16    <application
+16-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:8:5-24:19
+17        android:allowBackup="false"
+17-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:11:9-36
+18        android:debuggable="true"
+19        android:icon="@android:drawable/ic_menu_gallery"
+19-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:10:9-57
+20        android:label="333Farmer Helper" >
+20-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:9:9-41
+21        <activity
+21-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:13:9-22:20
+22            android:name="com.farmer333.wallpaperhelper.SetWallpaperActivity"
+22-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:14:13-49
+23            android:exported="true"
+23-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:15:13-36
+24            android:noHistory="true"
+24-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:17:13-37
+25            android:theme="@android:style/Theme.Translucent.NoTitleBar" >
+25-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:16:13-72
+26            <intent-filter>
+26-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:18:13-21:29
+27                <action android:name="com.genfarmer.SET_WALLPAPER" />
+27-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:19:17-70
+27-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:19:25-67
+28
+29                <category android:name="android.intent.category.DEFAULT" />
+29-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:20:17-76
+29-->C:\adb-device-farm\WallpaperHelper\app\src\main\AndroidManifest.xml:20:27-73
+30            </intent-filter>
+31        </activity>
+32    </application>
+33
+34</manifest>
