@@ -13,6 +13,7 @@
 
 class DeviceTile;
 class FocusPanel;
+class CursorBadge;
 class QGridLayout;
 class QLabel;
 class QLineEdit;
@@ -24,6 +25,8 @@ class QKeyEvent;
 class QPushButton;
 class QVBoxLayout;
 class QRubberBand;
+class QMenu;
+class QCheckBox;
 
 /**
  * The v2.0 device-farm dashboard, styled after a control center: a left control
@@ -40,6 +43,11 @@ class FarmWindow : public QWidget
 public:
     explicit FarmWindow(QWidget *parent = nullptr);
     ~FarmWindow() override;
+
+signals:
+    // Emitted once, the first time `adb devices` returns after launch — the cue to
+    // dismiss the startup splash.
+    void firstDevicesReady();
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -96,16 +104,26 @@ private:
     QString tileAt(const QPoint &point) const;
     QString selectorButtonAt(const QPoint &point) const;
     void updateHostTargets();
+    void tickCursorBadge();
     void applyGroup(const QString &name);
+    void addDevicesToGroup(const QString &name, const QStringList &serials);
+    void removeDevicesFromGroup(const QString &name, const QStringList &serials);
+    void newGroupWithDevices(const QStringList &serials);
+    void buildAddToGroupMenu(QMenu *parent, const QStringList &serials);
     void loadGroups();
     void saveGroups();
     void rebuildGroups();
+    void updateGroupStyles();           // refresh group chips/counts to track selection
+    void renameGroup(const QString &name);
+    QString chipLabelFor(const QString &serial) const;
     void onAdbResult(qsc::AdbProcess::ADB_EXEC_RESULT result);
     DeviceTile *ensureTile(const QString &serial);
     void removeTile(const QString &serial);
     void relayout();
+    void scheduleRelayout();    // coalesce burst relayouts into one per event-loop turn
     void pumpConnectQueue();
     bool startConnect(const QString &serial);
+    void finishConnect(const QString &serial);   // async continuation after resolution normalize
     void updateConnectStatus();
     QList<QString> inputTargets(const QString &sourceSerial) const;
     void showTileContextMenu(const QString &serial, const QPoint &globalPos);
@@ -125,6 +143,8 @@ private:
     QString m_wifiSerial;
     bool m_groupMode = false;
     bool m_smallViewControl = false;   // grid tiles control their device directly
+    bool m_autoMirrorPending = true;   // auto-"Mirror All" once on the first device list
+    bool m_relayoutPending = false;    // a coalesced relayout is already queued
     int m_portSeq = 0;                 // hands out a unique reverse port per device
 
     // Numbered selector + groups
@@ -132,6 +152,12 @@ private:
     QHash<QString, int> m_numbering;            // serial -> display number
     QHash<QString, QPushButton *> m_selectorButtons;
     QHash<QString, QStringList> m_groups;       // group name -> serials
+    QSet<QString> m_collapsedGroups;            // groups whose chip grid is collapsed
+    QString m_isolatedGroup;                    // when set, grid shows only this group's tiles
+    // Live widgets for the GenFarmer-style group cards (rebuilt by rebuildGroups).
+    QHash<QString, QHash<QString, QPushButton *>> m_groupChips;  // group -> serial -> chip
+    QHash<QString, QLabel *> m_groupCountLabels;                 // group -> "(sel / total)"
+    QHash<QString, QCheckBox *> m_groupSelectAll;                // group -> "Seleccionar todo"
     QGridLayout *m_selectorGrid = nullptr;
     QWidget *m_selectorGridHost = nullptr;
     QVBoxLayout *m_groupsLayout = nullptr;
@@ -149,6 +175,10 @@ private:
     QPoint m_rubberOrigin;
     bool m_dragging = false;
     QSet<QString> m_tilesUnderRubber;       // tiles currently under rubber band (for preview)
+    CursorBadge *m_cursorBadge = nullptr;   // GenFarmer-style "carry" chip following the cursor
+    QTimer *m_badgeTimer = nullptr;         // drives the chip to follow the cursor while selected
+    bool m_selDragArmed = false;            // left-press began on an already-selected tile
+    bool m_selDragging = false;             // dragging that selection (badge visible)
     FocusPanel *m_focusPanel = nullptr;
     QLabel *m_statusBar = nullptr;
     QLineEdit *m_ipEdit = nullptr;

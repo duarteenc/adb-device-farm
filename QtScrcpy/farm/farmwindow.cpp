@@ -1,11 +1,13 @@
 #include "farmwindow.h"
 #include "adbcontrollerdialog.h"
+#include "cursorbadge.h"
 #include "devicesdialog.h"
 #include "installapkdialog.h"
 
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <memory>
 #include <utility>
 
 #include <QCheckBox>
@@ -35,6 +37,7 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
+#include <QCursor>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -60,7 +63,8 @@ QString resolveAdbPath()
 constexpr int kGridSpacing = 10;
 constexpr int kGridMargin = 12;
 constexpr int kMinTileWidth = 160;    // floor: phones unreadable below this
-constexpr int kMaxConcurrent = 8;     // simultaneous connection setups
+constexpr int kMaxConcurrent = 4;     // simultaneous connection setups (smooths the
+                                      // server-start + first-frame decode spike)
 constexpr quint16 kBasePort = 27183;  // reverse-tunnel port base (unique per device)
 // Every device is forced to this resolution/density on connect so all phones
 // mirror and (most importantly) accept control coordinates identically.
@@ -98,7 +102,8 @@ QSlider::sub-page:horizontal { background:#2563eb; border-radius:2px; }
 #tileOverlay { background: transparent; }
 #tileNum { background: transparent; color:#ffffff; font-size:16px; font-weight:bold; }
 #tileModel { background: transparent; color:#f1f5f9; font-size:11px; font-weight:bold; }
-#tileIp { background: transparent; color:#dbe4f0; font-size:10px; }
+#tileIp { background: transparent; color:#ffffff; font-size:10px; font-weight:bold; }
+#tileNum[sel="true"], #tileModel[sel="true"], #tileIp[sel="true"] { color:#3b9dff; }
 #tileFps { background: transparent; color:#dbe4f0; font-size:9px; }
 )";
 }
@@ -126,6 +131,13 @@ FarmWindow::FarmWindow(QWidget *parent)
     m_scroll->setWidgetResizable(true);
     m_scroll->setWidget(m_gridHost);
     m_scroll->viewport()->installEventFilter(this);    // relayout when grid width changes
+
+    m_cursorBadge = new CursorBadge();    // top-level float; follows the cursor while there's a selection
+    m_cursorBadge->hide();
+    m_badgeTimer = new QTimer(this);
+    m_badgeTimer->setInterval(30);
+    connect(m_badgeTimer, &QTimer::timeout, this, &FarmWindow::tickCursorBadge);
+    m_badgeTimer->start();
 
     m_focusPanel = new FocusPanel(this);
     m_focusPanel->hide();
@@ -408,7 +420,10 @@ void FarmWindow::rebuildNumbering()
     // This reserves their positions even before they connect
     for (const QString &serial : sorted) {
         if (!m_tiles.contains(serial)) {
-            auto *tile = new DeviceTile(serial);
+            // Parent to the grid host up front: with the relayout deferred
+            // (scheduleRelayout), an unparented tile would briefly be a top-level
+            // window — a white, un-themed phone floating on screen.
+            auto *tile = new DeviceTile(serial, m_gridHost);
             tile->setTileWidth(m_tileWidth);
             tile->setNumber(m_numbering.value(serial, 0));
             tile->setControllable(m_smallViewControl);
@@ -430,7 +445,7 @@ void FarmWindow::rebuildNumbering()
 
     // Rebuild m_order from scratch using ALL sorted devices
     m_order = sorted;
-    relayout();
+    scheduleRelayout();
 }
 
 void FarmWindow::rebuildSelector()
@@ -527,13 +542,16 @@ void FarmWindow::updateTileSelectionStyles()
     for (auto it = m_tiles.begin(); it != m_tiles.end(); ++it) {
         it.value()->setSelected(m_selectedSerials.contains(it.key()));
     }
+    updateGroupStyles();    // group cards mirror the selection (chips, counts, "select all")
     updateHostTargets();    // keep the host's broadcast set in sync with the selection
 }
 
 QString FarmWindow::tileAt(const QPoint &point) const
 {
     for (auto it = m_tiles.begin(); it != m_tiles.end(); ++it) {
-        if (it.value()->geometry().contains(point)) {
+        // Skip tiles hidden by the group "isolate" view — their stale geometry
+        // must not capture clicks/drags.
+        if (it.value()->isVisible() && it.value()->geometry().contains(point)) {
             return it.key();
         }
     }
@@ -549,6 +567,26 @@ QString FarmWindow::selectorButtonAt(const QPoint &point) const
         }
     }
     return QString();
+}
+
+void FarmWindow::tickCursorBadge()
+{
+    // The chip follows the cursor while any device is selected. During a marquee
+    // drag it previews how many tiles the rubber band currently covers.
+    int count = m_dragging ? static_cast<int>(m_tilesUnderRubber.size())
+                           : static_cast<int>(m_selectedSerials.size());
+    if (count <= 0) {
+        if (m_cursorBadge->isVisible()) {
+            m_cursorBadge->hide();
+        }
+        return;
+    }
+    m_cursorBadge->setCount(count);
+    m_cursorBadge->moveToCursor(QCursor::pos());
+    if (!m_cursorBadge->isVisible()) {
+        m_cursorBadge->show();
+        m_cursorBadge->raise();
+    }
 }
 
 void FarmWindow::updateHostTargets()
@@ -576,7 +614,7 @@ void FarmWindow::applyRubberSelection(const QRect &rect, bool additive)
         m_selectedSerials.clear();
     }
     for (auto it = m_tiles.begin(); it != m_tiles.end(); ++it) {
-        if (it.value()->geometry().intersects(rect)) {
+        if (it.value()->isVisible() && it.value()->geometry().intersects(rect)) {
             m_selectedSerials.insert(it.key());
         }
     }
@@ -620,10 +658,8 @@ void FarmWindow::mirrorSelected()
 
 void FarmWindow::createGroup()
 {
-    if (m_selectedSerials.isEmpty()) {
-        m_statusBar->setText(tr("Select devices first to make a group."));
-        return;
-    }
+    // Groups may be created empty — devices are assigned later from the tile
+    // right-click menu ("Agregar al grupo").
     bool ok = false;
     const QString name =
         QInputDialog::getText(this, tr("New group"), tr("Group name:"), QLineEdit::Normal,
@@ -632,9 +668,12 @@ void FarmWindow::createGroup()
     if (!ok || name.isEmpty()) {
         return;
     }
-    QStringList serials;
+    // Seed with the current selection if any; otherwise an empty group.
+    QStringList serials = m_groups.value(name);
     for (const QString &s : m_selectedSerials) {
-        serials << s;
+        if (!serials.contains(s)) {
+            serials << s;
+        }
     }
     m_groups.insert(name, serials);
     saveGroups();
@@ -656,6 +695,100 @@ void FarmWindow::applyGroup(const QString &name)
     m_statusBar->setText(tr("Group '%1' selected (%2)").arg(name).arg(m_groups[name].size()));
 }
 
+void FarmWindow::addDevicesToGroup(const QString &name, const QStringList &serials)
+{
+    QStringList list = m_groups.value(name);
+    for (const QString &s : serials) {
+        if (!list.contains(s)) {
+            list << s;
+        }
+    }
+    m_groups.insert(name, list);
+    saveGroups();
+    rebuildGroups();
+    if (m_isolatedGroup == name) {
+        relayout();    // isolated view must reflect the new members
+    }
+    m_statusBar->setText(
+        tr("Added %1 device(s) to '%2' (%3)").arg(serials.size()).arg(name).arg(list.size()));
+}
+
+void FarmWindow::removeDevicesFromGroup(const QString &name, const QStringList &serials)
+{
+    if (!m_groups.contains(name)) {
+        return;
+    }
+    QStringList list = m_groups.value(name);
+    for (const QString &s : serials) {
+        list.removeAll(s);
+    }
+    m_groups.insert(name, list);
+    saveGroups();
+    rebuildGroups();
+    if (m_isolatedGroup == name) {
+        relayout();    // isolated view must reflect the removed members
+    }
+    m_statusBar->setText(
+        tr("Removed %1 device(s) from '%2' (%3)").arg(serials.size()).arg(name).arg(list.size()));
+}
+
+void FarmWindow::newGroupWithDevices(const QStringList &serials)
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Nuevo grupo"), tr("Nombre del grupo:"),
+                                               QLineEdit::Normal, QString(), &ok)
+                             .trimmed();
+    if (!ok || name.isEmpty()) {
+        return;
+    }
+    addDevicesToGroup(name, serials);
+}
+
+void FarmWindow::buildAddToGroupMenu(QMenu *parent, const QStringList &serials)
+{
+    QMenu *sub = parent->addMenu(tr("Agregar al grupo"));
+
+    QStringList names = m_groups.keys();
+    names.sort();
+    for (const QString &name : names) {
+        const QStringList members = m_groups.value(name);
+        // Checked when every targeted device is already in the group.
+        bool allIn = !serials.isEmpty();
+        for (const QString &s : serials) {
+            if (!members.contains(s)) {
+                allIn = false;
+                break;
+            }
+        }
+        QAction *act = sub->addAction(tr("%1 (%2)").arg(name).arg(members.size()));
+        act->setCheckable(true);
+        act->setChecked(allIn);
+        connect(act, &QAction::triggered, this, [this, name, serials, allIn]() {
+            if (allIn) {
+                removeDevicesFromGroup(name, serials);
+            } else {
+                addDevicesToGroup(name, serials);
+            }
+        });
+    }
+
+    if (!names.isEmpty()) {
+        sub->addSeparator();
+    }
+    QAction *newAct = sub->addAction(tr("Nuevo grupo…"));
+    connect(newAct, &QAction::triggered, this, [this, serials]() { newGroupWithDevices(serials); });
+}
+
+QString FarmWindow::chipLabelFor(const QString &serial) const
+{
+    if (m_numbering.contains(serial)) {
+        return QString::number(m_numbering.value(serial));
+    }
+    // Offline / not enumerated: fall back to the IP's last octet.
+    const QString tail = serial.section(':', 0, 0).section('.', -1);
+    return tail.isEmpty() ? QStringLiteral("?") : tail;
+}
+
 void FarmWindow::rebuildGroups()
 {
     if (!m_groupsLayout) {
@@ -667,36 +800,247 @@ void FarmWindow::rebuildGroups()
         }
         delete item;
     }
+    m_groupChips.clear();
+    m_groupCountLabels.clear();
+    m_groupSelectAll.clear();
+
     QStringList names = m_groups.keys();
     names.sort();
     for (const QString &name : names) {
-        auto *rowW = new QWidget;
-        auto *row = new QHBoxLayout(rowW);
-        row->setContentsMargins(0, 0, 0, 0);
-        row->setSpacing(4);
-        auto *applyBtn =
-            new QPushButton(QStringLiteral("%1 (%2)").arg(name).arg(m_groups[name].size()), rowW);
-        auto *delBtn = new QPushButton(tr("x"), rowW);
-        delBtn->setFixedWidth(24);
-        row->addWidget(applyBtn, 1);
-        row->addWidget(delBtn, 0);
-        m_groupsLayout->addWidget(rowW);
-        connect(applyBtn, &QPushButton::clicked, this, [this, name] { applyGroup(name); });
-        connect(delBtn, &QPushButton::clicked, this, [this, name] {
+        const QStringList members = m_groups.value(name);
+        const bool collapsed = m_collapsedGroups.contains(name);
+
+        // ---- Card ----
+        auto *card = new QWidget;
+        card->setObjectName(QStringLiteral("groupCard"));
+        card->setStyleSheet(QStringLiteral(
+            "#groupCard{background:#141a28;border:1px solid #232c40;border-radius:6px;}"));
+        auto *cardLay = new QVBoxLayout(card);
+        cardLay->setContentsMargins(8, 6, 8, 8);
+        cardLay->setSpacing(6);
+
+        // ---- Header: chevron · name · (sel/total) · edit · delete · eye ----
+        auto *header = new QHBoxLayout();
+        header->setSpacing(6);
+
+        // Icons use the native Windows "Segoe MDL2 Assets" font (declared via the
+        // stylesheet's font-family) so the glyphs always render — plain emoji/unicode
+        // fell back to nothing in the app font and the buttons looked empty.
+        const QString iconFontFamily = QStringLiteral("font-family:'Segoe MDL2 Assets';");
+        const QString iconBtnQss =
+            QStringLiteral("QPushButton{background:transparent;border:none;color:#94a3b8;"
+                           "font-size:12px;%1}"
+                           "QPushButton:hover{color:#e2e8f0;}")
+                .arg(iconFontFamily);
+
+        // MDL2 glyphs: ChevronDown E70D / ChevronRight E76C, Edit E70F,
+        // Delete E74D, RedEye E7B3.
+        auto *chevron = new QPushButton(QString(QChar(collapsed ? 0xE76C : 0xE70D)));
+        chevron->setFixedSize(18, 18);
+        chevron->setStyleSheet(
+            QStringLiteral("QPushButton{background:transparent;border:none;color:#cbd5e1;"
+                           "font-size:11px;%1}")
+                .arg(iconFontFamily));
+        connect(chevron, &QPushButton::clicked, this, [this, name]() {
+            if (m_collapsedGroups.contains(name)) {
+                m_collapsedGroups.remove(name);
+            } else {
+                m_collapsedGroups.insert(name);
+            }
+            rebuildGroups();
+        });
+
+        auto *nameLabel = new QLabel(name);
+        nameLabel->setStyleSheet(QStringLiteral("font-weight:bold;color:#e2e8f0;"));
+
+        auto *countLabel = new QLabel();
+        countLabel->setStyleSheet(QStringLiteral("color:#94a3b8;font-size:11px;"));
+        m_groupCountLabels.insert(name, countLabel);
+
+        auto *editBtn = new QPushButton(QString(QChar(0xE70F)));
+        editBtn->setFixedSize(20, 18);
+        editBtn->setToolTip(tr("Renombrar grupo"));
+        editBtn->setStyleSheet(iconBtnQss);
+        connect(editBtn, &QPushButton::clicked, this, [this, name]() { renameGroup(name); });
+
+        auto *delBtn = new QPushButton(QString(QChar(0xE74D)));
+        delBtn->setFixedSize(20, 18);
+        delBtn->setToolTip(tr("Eliminar grupo"));
+        delBtn->setStyleSheet(iconBtnQss);
+        connect(delBtn, &QPushButton::clicked, this, [this, name]() {
             m_groups.remove(name);
+            m_collapsedGroups.remove(name);
+            if (m_isolatedGroup == name) {
+                m_isolatedGroup.clear();
+                relayout();
+            }
             saveGroups();
             rebuildGroups();
         });
+
+        const bool isolated = (m_isolatedGroup == name);
+        auto *eyeBtn = new QPushButton(QString(QChar(0xE7B3)));
+        eyeBtn->setFixedSize(20, 18);
+        eyeBtn->setToolTip(isolated ? tr("Mostrar todos los teléfonos")
+                                    : tr("Ver solo los teléfonos de este grupo"));
+        eyeBtn->setStyleSheet(isolated
+            ? QStringLiteral("QPushButton{background:transparent;border:none;color:#3b9dff;"
+                             "font-size:12px;%1}").arg(iconFontFamily)
+            : iconBtnQss);
+        connect(eyeBtn, &QPushButton::clicked, this, [this, name]() {
+            // Toggle the isolate view: hide every tile not in this group.
+            m_isolatedGroup = (m_isolatedGroup == name) ? QString() : name;
+            relayout();
+            rebuildGroups();    // refresh the eye highlight
+        });
+
+        header->addWidget(chevron, 0);
+        header->addWidget(nameLabel, 0);
+        header->addWidget(countLabel, 0);
+        header->addStretch(1);
+        header->addWidget(editBtn, 0);
+        header->addWidget(delBtn, 0);
+        header->addWidget(eyeBtn, 0);
+        cardLay->addLayout(header);
+
+        if (!collapsed) {
+            // ---- "Seleccionar todo" ----
+            auto *selAll = new QCheckBox(tr("Seleccionar todo"));
+            selAll->setTristate(true);
+            selAll->setStyleSheet(QStringLiteral("QCheckBox{color:#60a5fa;font-size:12px;}"));
+            m_groupSelectAll.insert(name, selAll);
+            connect(selAll, &QCheckBox::clicked, this, [this, name]() {
+                const QStringList mem = m_groups.value(name);
+                bool allIn = !mem.isEmpty();
+                for (const QString &s : mem) {
+                    if (!m_selectedSerials.contains(s)) {
+                        allIn = false;
+                        break;
+                    }
+                }
+                if (allIn) {
+                    for (const QString &s : mem) {
+                        m_selectedSerials.remove(s);
+                    }
+                } else {
+                    for (const QString &s : mem) {
+                        m_selectedSerials.insert(s);
+                    }
+                }
+                updateSelectorStyles();
+                updateTileSelectionStyles();
+            });
+            cardLay->addWidget(selAll);
+
+            // ---- Member chips ----
+            auto *chipsHost = new QWidget;
+            auto *chipsGrid = new QGridLayout(chipsHost);
+            chipsGrid->setContentsMargins(0, 0, 0, 0);
+            chipsGrid->setSpacing(4);
+            chipsGrid->setAlignment(Qt::AlignLeft);
+
+            QHash<QString, QPushButton *> chips;
+            const int cols = 5;
+            int i = 0;
+            for (const QString &serial : members) {
+                auto *chip = new QPushButton(chipLabelFor(serial));
+                chip->setCheckable(true);
+                chip->setFixedSize(34, 26);
+                connect(chip, &QPushButton::clicked, this,
+                        [this, serial]() { toggleSelection(serial); });
+                chipsGrid->addWidget(chip, i / cols, i % cols);
+                chips.insert(serial, chip);
+                ++i;
+            }
+            m_groupChips.insert(name, chips);
+            cardLay->addWidget(chipsHost);
+        }
+
+        m_groupsLayout->addWidget(card);
     }
+
+    updateGroupStyles();
+}
+
+void FarmWindow::updateGroupStyles()
+{
+    for (auto git = m_groups.begin(); git != m_groups.end(); ++git) {
+        const QString &name = git.key();
+        const QStringList &members = git.value();
+
+        int selectedCount = 0;
+        for (const QString &s : members) {
+            if (m_selectedSerials.contains(s)) {
+                ++selectedCount;
+            }
+        }
+
+        if (QLabel *count = m_groupCountLabels.value(name, nullptr)) {
+            count->setText(QStringLiteral("(%1 / %2)").arg(selectedCount).arg(members.size()));
+        }
+        if (QCheckBox *selAll = m_groupSelectAll.value(name, nullptr)) {
+            QSignalBlocker block(selAll);
+            selAll->setCheckState(members.isEmpty() || selectedCount == 0 ? Qt::Unchecked
+                                  : selectedCount == members.size()       ? Qt::Checked
+                                                                          : Qt::PartiallyChecked);
+        }
+        const QHash<QString, QPushButton *> chips = m_groupChips.value(name);
+        for (auto cit = chips.begin(); cit != chips.end(); ++cit) {
+            const bool sel = m_selectedSerials.contains(cit.key());
+            const bool mirroring = m_tiles.contains(cit.key());
+            cit.value()->setChecked(sel);
+            cit.value()->setStyleSheet(
+                QStringLiteral("QPushButton{background:%1;border:1px solid %2;border-radius:4px;"
+                               "color:#e2e8f0;font-size:11px;}")
+                    .arg(sel ? QStringLiteral("#2563eb") : QStringLiteral("#1c2436"),
+                         mirroring ? QStringLiteral("#22c55e") : QStringLiteral("#2a344a")));
+        }
+    }
+}
+
+void FarmWindow::renameGroup(const QString &name)
+{
+    bool ok = false;
+    const QString newName = QInputDialog::getText(this, tr("Renombrar grupo"),
+                                                  tr("Nuevo nombre:"), QLineEdit::Normal, name, &ok)
+                                .trimmed();
+    if (!ok || newName.isEmpty() || newName == name) {
+        return;
+    }
+    const QStringList serials = m_groups.value(name);
+    m_groups.remove(name);
+    if (m_collapsedGroups.remove(name)) {
+        m_collapsedGroups.insert(newName);
+    }
+    if (m_isolatedGroup == name) {
+        m_isolatedGroup = newName;
+    }
+    m_groups.insert(newName, serials);
+    saveGroups();
+    rebuildGroups();
 }
 
 void FarmWindow::loadGroups()
 {
     QSettings settings(QStringLiteral("ZamiApp"), QStringLiteral("AdbDeviceFarm"));
     settings.beginGroup(QStringLiteral("farm_groups"));
-    const QStringList names = settings.childKeys();
-    for (const QString &name : names) {
-        m_groups.insert(name, settings.value(name).toStringList());
+    // New scheme: an explicit __names__ list (so empty groups persist) + serials
+    // stored by index (immune to group names containing '/').
+    const QStringList names = settings.value(QStringLiteral("__names__")).toStringList();
+    if (!names.isEmpty()) {
+        for (int i = 0; i < names.size(); ++i) {
+            m_groups.insert(names.at(i),
+                            settings.value(QStringLiteral("serials_%1").arg(i)).toStringList());
+        }
+    } else {
+        // Legacy scheme: each child key is a group name -> its serials.
+        const QStringList keys = settings.childKeys();
+        for (const QString &name : keys) {
+            if (name == QLatin1String("__names__")) {
+                continue;
+            }
+            m_groups.insert(name, settings.value(name).toStringList());
+        }
     }
     settings.endGroup();
 }
@@ -705,9 +1049,14 @@ void FarmWindow::saveGroups()
 {
     QSettings settings(QStringLiteral("ZamiApp"), QStringLiteral("AdbDeviceFarm"));
     settings.beginGroup(QStringLiteral("farm_groups"));
-    settings.remove(QString());
+    settings.remove(QString());    // wipe both legacy and prior keys
+    QStringList names;
     for (auto it = m_groups.begin(); it != m_groups.end(); ++it) {
-        settings.setValue(it.key(), it.value());
+        names << it.key();
+    }
+    settings.setValue(QStringLiteral("__names__"), names);
+    for (int i = 0; i < names.size(); ++i) {
+        settings.setValue(QStringLiteral("serials_%1").arg(i), m_groups.value(names.at(i)));
     }
     settings.endGroup();
 }
@@ -715,7 +1064,7 @@ void FarmWindow::saveGroups()
 void FarmWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    relayout();
+    scheduleRelayout();
 }
 
 bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
@@ -723,7 +1072,7 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
     // The grid's available width changes when the host panel shows/hides or the
     // window resizes; reflow the columns whenever the viewport is resized.
     if (m_scroll && watched == m_scroll->viewport() && event->type() == QEvent::Resize) {
-        relayout();
+        scheduleRelayout();
         return QWidget::eventFilter(watched, event);
     }
 
@@ -820,6 +1169,11 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
             if (me->button() == Qt::LeftButton) {
                 m_rubberOrigin = me->position().toPoint();
                 m_dragging = false;
+                // If the press lands on an already-selected tile, dragging carries
+                // the whole selection (GenFarmer-style chip) instead of marquee-ing.
+                const QString hit = tileAt(me->position().toPoint());
+                m_selDragArmed = !hit.isEmpty() && m_selectedSerials.contains(hit);
+                m_selDragging = false;
             } else if (me->button() == Qt::RightButton) {
                 // Check if we have multiple selected devices
                 if (!m_selectedSerials.isEmpty()) {
@@ -837,6 +1191,14 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
             auto *me = static_cast<QMouseEvent *>(event);
             if (me->buttons() & Qt::LeftButton) {
                 const QPoint p = me->position().toPoint();
+                // Carrying a selection: skip the marquee (the chip is driven by the
+                // cursor-badge timer while any device is selected).
+                if (m_selDragArmed) {
+                    if (!m_selDragging && (p - m_rubberOrigin).manhattanLength() > 6) {
+                        m_selDragging = true;
+                    }
+                    break;
+                }
                 if (!m_dragging && (p - m_rubberOrigin).manhattanLength() > 6) {
                     m_dragging = true;
                     m_rubberBand->setGeometry(QRect(m_rubberOrigin, QSize()));
@@ -850,7 +1212,7 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
                     QSet<QString> newTilesUnderRubber;
                     const QRect rubberRect = m_rubberBand->geometry();
                     for (auto it = m_tiles.begin(); it != m_tiles.end(); ++it) {
-                        if (it.value()->geometry().intersects(rubberRect)) {
+                        if (it.value()->isVisible() && it.value()->geometry().intersects(rubberRect)) {
                             newTilesUnderRubber.insert(it.key());
                         }
                     }
@@ -894,6 +1256,18 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
             if (me->button() != Qt::LeftButton) {
                 break;
             }
+            if (m_selDragArmed) {
+                m_selDragArmed = false;
+                if (m_selDragging) {
+                    // It was a real carry-drag: keep the selection intact (don't
+                    // treat the release as a click/toggle). The chip stays visible
+                    // via the timer while devices remain selected.
+                    m_selDragging = false;
+                    break;
+                }
+                // Otherwise it was a plain click on a selected tile -> fall through
+                // to the normal toggle handling below.
+            }
             if (m_dragging) {
                 const QRect r = m_rubberBand->geometry();
                 m_rubberBand->hide();
@@ -918,6 +1292,9 @@ bool FarmWindow::eventFilter(QObject *watched, QEvent *event)
                 const QString serial = tileAt(me->position().toPoint());
                 if (!serial.isEmpty()) {
                     onTileClicked(serial);    // toggle this tile's selection
+                } else if (!m_selectedSerials.isEmpty()) {
+                    // Click on empty background clears the current selection.
+                    clearDeviceSelection();
                 }
             }
             break;
@@ -1037,6 +1414,15 @@ void FarmWindow::onAdbResult(qsc::AdbProcess::ADB_EXEC_RESULT result)
             rebuildSelector();
             m_statusBar->setText(
                 tr("%1 device(s) detected").arg(static_cast<int>(m_available.size())));
+            // First enumeration after launch: auto-connect everything ("Mirror All")
+            // and let the splash know it can close.
+            if (m_autoMirrorPending) {
+                m_autoMirrorPending = false;
+                emit firstDevicesReady();
+                if (!m_available.isEmpty()) {
+                    mirrorAll();
+                }
+            }
         }
     } else if (args.contains("tcpip")) {
         if (ok) {
@@ -1077,10 +1463,45 @@ bool FarmWindow::startConnect(const QString &serial)
     // Normalize resolution/density BEFORE scrcpy captures, so every phone streams
     // and accepts control at the same coordinate space (mixed native resolutions
     // otherwise make broadcast input land in the wrong place on some models).
+    // This MUST NOT block the GUI thread: with "Mirror All" the queue calls
+    // startConnect() for several devices back-to-back, and a synchronous adb shell
+    // per device froze the window ("Not Responding"). Run it async, then continue
+    // the actual connection in finishConnect() once normalization completes.
     const QString adb = resolveAdbPath();
-    QProcess::execute(adb, {"-s", serial, "shell",
-                            QStringLiteral("wm size %1 ; wm density %2")
-                                .arg(QLatin1String(kNormalizedSize), QLatin1String(kNormalizedDensity))});
+    auto *proc = new QProcess(this);
+    auto done = std::make_shared<bool>(false);
+    auto proceed = [this, serial, proc, done]() {
+        if (*done) {
+            return;
+        }
+        *done = true;
+        proc->deleteLater();
+        finishConnect(serial);
+    };
+    connect(proc, &QProcess::finished, this,
+            [proceed](int, QProcess::ExitStatus) { proceed(); });
+    connect(proc, &QProcess::errorOccurred, this,
+            [proceed](QProcess::ProcessError) { proceed(); });
+    // Safety net: never let a stuck adb shell strand a connecting slot forever.
+    QTimer::singleShot(8000, proc, [proceed]() { proceed(); });
+    proc->start(adb, {"-s", serial, "shell",
+                      QStringLiteral("wm size %1 ; wm density %2")
+                          .arg(QLatin1String(kNormalizedSize), QLatin1String(kNormalizedDensity))});
+    return true;
+}
+
+void FarmWindow::finishConnect(const QString &serial)
+{
+    // The device may have been cancelled/disconnected while normalizing.
+    if (!m_connecting.contains(serial)) {
+        return;
+    }
+    DeviceTile *tile = m_tiles.value(serial, nullptr);
+    if (!tile) {
+        m_connecting.remove(serial);
+        pumpConnectQueue();
+        return;
+    }
 
     qsc::DeviceParams params;
     params.serial = serial;
@@ -1099,10 +1520,12 @@ bool FarmWindow::startConnect(const QString &serial)
     if (!qsc::IDeviceManage::getInstance().connectDevice(params)) {
         m_statusBar->setText(tr("connect failed: %1").arg(serial));
         tile->setLoading(false);
+        m_connecting.remove(serial);
         removeTile(serial);
-        return false;
+        pumpConnectQueue();    // free the slot and keep the queue moving
+        return;
     }
-    return true;
+    // Success: onDeviceConnected() will clear m_connecting and pump the queue.
 }
 
 void FarmWindow::onDeviceConnected(bool success, const QString &serial, const QString &deviceName,
@@ -1133,10 +1556,16 @@ void FarmWindow::onDeviceConnected(bool success, const QString &serial, const QS
         device->registerDeviceObserver(tile);
     }
 
-    // Re-sort tiles after connection to maintain numerical order
-    rebuildNumbering();
+    // Placeholders are already created/sorted/laid out at device enumeration, so a
+    // connecting device keeps its slot — no full rebuildNumbering()/relayout() per
+    // connect (that was O(n) work per device → O(n²) jank during "Mirror All").
+    // Only rebuild if this device wasn't part of the enumerated set (e.g. a WiFi
+    // device that appeared on its own).
+    if (!m_order.contains(serial)) {
+        rebuildNumbering();
+    }
 
-    updateSelectorStyles();    // mark this device as mirroring in the selector
+    updateSelectorButtonStyle(serial);    // mark just this device as mirroring (O(1))
 
     // Auto-install 333Farmer Helper APK if not already installed
     checkAndInstallHelperApk(serial);
@@ -1356,6 +1785,14 @@ void FarmWindow::showTileContextMenu(const QString &serial, const QPoint &global
         openAdbController(QStringList{serial});
     });
 
+    QAction *restartAction = menu.addAction(tr("Reiniciar teléfono"));
+    connect(restartAction, &QAction::triggered, this, [this, serial]() {
+        restartDevice(serial);
+    });
+
+    menu.addSeparator();
+    buildAddToGroupMenu(&menu, QStringList{serial});
+
     menu.exec(globalPos);
 }
 
@@ -1376,6 +1813,17 @@ void FarmWindow::showMultiSelectContextMenu(const QPoint &globalPos)
 
     QAction *adbControllerAction = menu.addAction(tr("ADB Controller"));
     connect(adbControllerAction, &QAction::triggered, this, [this]() { openAdbController(); });
+
+    QAction *restartAction = menu.addAction(tr("Reiniciar %1 teléfonos").arg(count));
+    connect(restartAction, &QAction::triggered, this, [this]() {
+        const QList<QString> serials = m_selectedSerials.values();
+        for (const QString &serial : serials) {
+            restartDevice(serial);
+        }
+    });
+
+    menu.addSeparator();
+    buildAddToGroupMenu(&menu, m_selectedSerials.values());
 
     menu.exec(globalPos);
 }
@@ -1447,7 +1895,7 @@ DeviceTile *FarmWindow::ensureTile(const QString &serial)
     if (it != m_tiles.end()) {
         return it.value();
     }
-    auto *tile = new DeviceTile(serial);
+    auto *tile = new DeviceTile(serial, m_gridHost);
     tile->setTileWidth(m_tileWidth);
     tile->setControllable(m_smallViewControl);
     // Per-tile control (active only when the tile is controllable; otherwise the
@@ -1460,7 +1908,7 @@ DeviceTile *FarmWindow::ensureTile(const QString &serial)
     connect(tile, &DeviceTile::contextMenuRequested, this, &FarmWindow::onTileContextMenuRequested);
     m_tiles.insert(serial, tile);
     m_order.append(serial);
-    relayout();
+    scheduleRelayout();
     return tile;
 }
 
@@ -1508,7 +1956,31 @@ void FarmWindow::relayout()
         m_grid->setRowStretch(r, 0);
     }
 
-    const int count = static_cast<int>(m_order.size());
+    // Group "isolate" view (the eye 👁): show only the chosen group's tiles, hide
+    // the rest. Empty m_isolatedGroup → show everything.
+    const bool isolate = !m_isolatedGroup.isEmpty() && m_groups.contains(m_isolatedGroup);
+    QSet<QString> isoSet;
+    if (isolate) {
+        const QStringList mem = m_groups.value(m_isolatedGroup);
+        for (const QString &s : mem) {
+            isoSet.insert(s);
+        }
+    }
+
+    QList<QString> visible;
+    for (const QString &s : m_order) {
+        DeviceTile *tile = m_tiles.value(s, nullptr);
+        if (!tile) {
+            continue;
+        }
+        if (isolate && !isoSet.contains(s)) {
+            tile->hide();
+        } else {
+            visible.append(s);
+        }
+    }
+
+    const int count = static_cast<int>(visible.size());
     if (count == 0) {
         return;
     }
@@ -1519,16 +1991,32 @@ void FarmWindow::relayout()
     cols = std::min(cols, count);
 
     for (int i = 0; i < count; ++i) {
-        DeviceTile *tile = m_tiles.value(m_order.at(i), nullptr);
+        DeviceTile *tile = m_tiles.value(visible.at(i), nullptr);
         if (!tile) {
             continue;
         }
-        tile->setNumber(m_numbering.value(m_order.at(i), i + 1));
+        tile->show();
+        tile->setNumber(m_numbering.value(visible.at(i), i + 1));
         m_grid->addWidget(tile, i / cols, i % cols, Qt::AlignTop | Qt::AlignLeft);
     }
     const int rows = (count + cols - 1) / cols;
     m_grid->setColumnStretch(cols, 1);    // push tiles to the left
     m_grid->setRowStretch(rows, 1);       // push tiles to the top
+}
+
+void FarmWindow::scheduleRelayout()
+{
+    // Collapse a burst of relayout requests (many tiles connecting at once, rapid
+    // resize events) into a single relayout on the next event-loop turn, so the
+    // grid isn't rebuilt O(n) times during "Mirror All".
+    if (m_relayoutPending) {
+        return;
+    }
+    m_relayoutPending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_relayoutPending = false;
+        relayout();
+    });
 }
 
 QString FarmWindow::serverPath()

@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPropertyAnimation>
+#include <QStyle>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -158,7 +159,23 @@ void DeviceTile::setStatusText(const QString &text)
 void DeviceTile::setSelected(bool selected)
 {
     m_selected = selected;
+    updateTextSelectionColor();
     applyBorder();
+}
+
+void DeviceTile::updateTextSelectionColor()
+{
+    // Recolour the number / model / IP blue while selected OR previewed during a
+    // marquee drag (white otherwise) via a dynamic property the global stylesheet
+    // keys off (e.g. #tileIp[sel="true"]).
+    const bool on = m_selected || m_selectionPreview;
+    for (QLabel *l : {m_numLabel, m_modelLabel, m_ipLabel}) {
+        if (l->property("sel").toBool() != on) {
+            l->setProperty("sel", on);
+            l->style()->unpolish(l);
+            l->style()->polish(l);
+        }
+    }
 }
 
 void DeviceTile::setUnderControl(bool on)
@@ -171,6 +188,7 @@ void DeviceTile::setUnderControl(bool on)
 void DeviceTile::setSelectionPreview(bool preview)
 {
     m_selectionPreview = preview;
+    updateTextSelectionColor();
     applyBorder();
 }
 

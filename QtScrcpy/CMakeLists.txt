@@ -198,6 +198,8 @@ source_group(groupcontroller FILES ${QC_GROUP_CONTROLLER})
 set(QC_FARM_SOURCES
     farm/adbcontrollerdialog.h
     farm/adbcontrollerdialog.cpp
+    farm/cursorbadge.h
+    farm/cursorbadge.cpp
     farm/devicesdialog.h
     farm/devicesdialog.cpp
     farm/devicetile.h

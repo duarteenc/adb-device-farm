@@ -74,6 +74,7 @@ protected:
 private:
     void refreshOverlay();
     void applyBorder();
+    void updateTextSelectionColor();
     void showContextMenu(const QPoint &pos);
 
     QString m_serial;

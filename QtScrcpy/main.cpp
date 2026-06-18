@@ -1,11 +1,13 @@
 ﻿#include <QApplication>
 #include <QDebug>
 #include <QFile>
-#include <QIcon>
-#ifdef Q_OS_LINUX
 #include <QFileInfo>
-#endif
+#include <QIcon>
+#include <QPainter>
+#include <QPixmap>
+#include <QSplashScreen>
 #include <QSurfaceFormat>
+#include <QTimer>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTranslator>
@@ -131,11 +133,47 @@ int main(int argc, char *argv[])
 
     qsc::AdbProcess::setAdbPath(Config::getInstance().getAdbPath());
 
-    // v2.0 device-farm dashboard (opt-in via the --farm flag).
-    if (a.arguments().contains("--farm")) {
+    // v2.0 device-farm dashboard: opt-in via the --farm flag, or implicitly when
+    // the executable is the branded 333Farmer build (e.g. 333Farmer.exe).
+    const bool farmByName =
+        QFileInfo(QCoreApplication::applicationFilePath()).completeBaseName().contains(
+            "Farmer", Qt::CaseInsensitive);
+    if (a.arguments().contains("--farm") || farmByName) {
+        // Startup splash: branded loading screen while the dashboard builds and the
+        // first `adb devices` runs (which then auto-connects every phone).
+        const int kSplashW = 440;
+        const int kSplashH = 200;
+        QPixmap splashPix(kSplashW, kSplashH);
+        splashPix.fill(QColor(0x0f, 0x14, 0x22));    // matches the app background
+        {
+            QPainter p(&splashPix);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(QColor(0xff, 0xff, 0xff));
+            QFont titleFont = p.font();
+            titleFont.setPointSize(30);
+            titleFont.setBold(true);
+            p.setFont(titleFont);
+            // "333Farmer" centred, leaving room for the status message at the bottom.
+            p.drawText(QRect(0, 0, kSplashW, kSplashH - 30), Qt::AlignCenter,
+                       QStringLiteral("333Farmer"));
+        }
+
+        QSplashScreen splash(splashPix);
+        splash.show();
+        splash.showMessage(QObject::tr("Conectando teléfonos…"),
+                           Qt::AlignBottom | Qt::AlignHCenter, QColor(0x9c, 0xb3, 0xd6));
+        a.processEvents();
+
         auto *farm = new FarmWindow();
         farm->resize(1280, 820);
         farm->showMaximized();
+
+        // Close the splash once the first device list arrives (phones start
+        // connecting), with a hard fallback so it never lingers.
+        QObject::connect(farm, &FarmWindow::firstDevicesReady, &splash,
+                         [&splash, farm]() { splash.finish(farm); });
+        QTimer::singleShot(6000, &splash, [&splash, farm]() { splash.finish(farm); });
+
         int farmRet = a.exec();
         delete farm;
 #if defined(Q_OS_WIN32) || defined(Q_OS_OSX)
