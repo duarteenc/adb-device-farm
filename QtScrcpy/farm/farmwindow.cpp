@@ -19,6 +19,7 @@
 #include <QFrame>
 #include <QGradient>
 #include <QGridLayout>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QInputDialog>
@@ -656,10 +657,16 @@ QString FarmWindow::selectorButtonAt(const QPoint &point) const
 
 void FarmWindow::tickCursorBadge()
 {
-    // The chip follows the cursor while any device is selected. During a marquee
-    // drag it previews how many tiles the rubber band currently covers.
+    // The chip is a top-level always-on-top window, so it would otherwise float
+    // over OTHER apps / the desktop. Only show it while our application is the
+    // active foreground app AND the cursor is actually over the farm window.
     int count = m_dragging ? static_cast<int>(m_tilesUnderRubber.size())
                            : static_cast<int>(m_selectedSerials.size());
+    const bool active = QGuiApplication::applicationState() == Qt::ApplicationActive;
+    const bool overWindow = frameGeometry().contains(QCursor::pos());
+    if (!active || !overWindow) {
+        count = 0;
+    }
     if (count <= 0) {
         if (m_cursorBadge->isVisible()) {
             m_cursorBadge->hide();
