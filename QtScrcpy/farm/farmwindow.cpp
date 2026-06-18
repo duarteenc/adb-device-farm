@@ -22,6 +22,7 @@
 #include <QHBoxLayout>
 #include <QImage>
 #include <QInputDialog>
+#include <QIntValidator>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -260,10 +261,90 @@ QWidget *FarmWindow::buildControlPanel()
     auto *restoreScreenTimeoutBtn = new QPushButton(tr("Restore Screen Timeout (selected)"), panel);
     restoreScreenTimeoutBtn->setToolTip(tr("Restore default screen timeout (30 seconds)"));
 
-    // WiFi
-    m_ipEdit = new QLineEdit(panel);
-    m_ipEdit->setPlaceholderText(tr("192.168.1.50:5555"));
+    // ---- WiFi connect (GenFarmer-style: a port box + start/end IP octet rows) ----
+    // Octet field factory: a small centred 0-255 box. Disabled boxes (the end
+    // row's first three) just mirror the start subnet and aren't editable.
+    auto makeOctet = [panel](const QString &initial, bool enabled) {
+        auto *e = new QLineEdit(initial, panel);
+        e->setEnabled(enabled);
+        e->setAlignment(Qt::AlignCenter);
+        e->setMaxLength(3);
+        e->setFixedWidth(46);
+        e->setValidator(new QIntValidator(0, 255, e));
+        e->setStyleSheet(QStringLiteral(
+            "QLineEdit{background:#0f1422;border:1px solid #2a344a;border-radius:6px;"
+            "padding:7px 0;color:#e2e8f0;font-weight:bold;}"
+            "QLineEdit:focus{border:1px solid #3b9dff;}"
+            "QLineEdit:disabled{background:#0c111c;color:#5b6680;}"));
+        return e;
+    };
+    auto dashLabel = [panel]() {
+        auto *d = new QLabel(QStringLiteral("-"), panel);
+        d->setStyleSheet(QStringLiteral("color:#5b6680;font-weight:bold;"));
+        return d;
+    };
+
+    // Port row.
+    m_portEdit = new QLineEdit(QStringLiteral("5555"), panel);
+    m_portEdit->setFixedWidth(72);
+    m_portEdit->setValidator(new QIntValidator(1, 65535, m_portEdit));
+    m_portEdit->setStyleSheet(QStringLiteral(
+        "QLineEdit{background:#0f1422;border:1px solid #2a344a;border-radius:6px;"
+        "padding:7px 8px;color:#e2e8f0;}"
+        "QLineEdit:focus{border:1px solid #3b9dff;}"));
+    auto *portRow = new QWidget(panel);
+    auto *portLay = new QHBoxLayout(portRow);
+    portLay->setContentsMargins(0, 0, 0, 0);
+    portLay->setSpacing(8);
+    portLay->addWidget(new QLabel(tr("Puerto"), panel));
+    portLay->addWidget(m_portEdit);
+    portLay->addStretch(1);
+
+    // Start IP row (all four octets editable).
+    m_octA = makeOctet(QStringLiteral("192"), true);
+    m_octB = makeOctet(QStringLiteral("168"), true);
+    m_octC = makeOctet(QStringLiteral("1"), true);
+    m_octStart = makeOctet(QStringLiteral("1"), true);
+    auto *startRow = new QWidget(panel);
+    auto *startLay = new QHBoxLayout(startRow);
+    startLay->setContentsMargins(0, 0, 0, 0);
+    startLay->setSpacing(4);
+    for (QLineEdit *o : {m_octA, m_octB, m_octC, m_octStart}) {
+        if (o != m_octA) {
+            startLay->addWidget(dashLabel());
+        }
+        startLay->addWidget(o);
+    }
+    startLay->addStretch(1);
+
+    // End IP row: first three octets locked to the start's subnet, only the last
+    // octet is editable (the range's end address).
+    m_octEndA = makeOctet(QStringLiteral("192"), false);
+    m_octEndB = makeOctet(QStringLiteral("168"), false);
+    m_octEndC = makeOctet(QStringLiteral("1"), false);
+    m_octEnd = makeOctet(QStringLiteral("255"), true);
+    auto *endRow = new QWidget(panel);
+    auto *endLay = new QHBoxLayout(endRow);
+    endLay->setContentsMargins(0, 0, 0, 0);
+    endLay->setSpacing(4);
+    for (QLineEdit *o : {m_octEndA, m_octEndB, m_octEndC, m_octEnd}) {
+        if (o != m_octEndA) {
+            endLay->addWidget(dashLabel());
+        }
+        endLay->addWidget(o);
+    }
+    endLay->addStretch(1);
+
+    // Keep the (disabled) end subnet mirroring the start as the user edits it.
+    connect(m_octA, &QLineEdit::textChanged, m_octEndA, &QLineEdit::setText);
+    connect(m_octB, &QLineEdit::textChanged, m_octEndB, &QLineEdit::setText);
+    connect(m_octC, &QLineEdit::textChanged, m_octEndC, &QLineEdit::setText);
+
     auto *connectBtn = new QPushButton(tr("Connect"), panel);
+    auto *wifiHint = new QLabel(
+        tr("IP inicial → IP final (mismo /24). Conecta todo el rango."), panel);
+    wifiHint->setObjectName("hint");
+    wifiHint->setWordWrap(true);
     auto *enableWifiBtn = new QPushButton(tr("Enable WiFi (selected)"), panel);
 
     m_statusBar = new QLabel(tr("Ready."), panel);
@@ -301,7 +382,10 @@ QWidget *FarmWindow::buildControlPanel()
     col->addWidget(buildSelectorSection());
     col->addWidget(sep());
     col->addWidget(new QLabel(tr("WiFi connect"), panel));
-    col->addWidget(m_ipEdit);
+    col->addWidget(portRow);
+    col->addWidget(startRow);
+    col->addWidget(endRow);
+    col->addWidget(wifiHint);
     col->addWidget(connectBtn);
     col->addWidget(enableWifiBtn);
     col->addStretch(1);
@@ -312,7 +396,8 @@ QWidget *FarmWindow::buildControlPanel()
     connect(mirrorAllBtn, &QPushButton::clicked, this, &FarmWindow::mirrorAll);
     connect(stopAllBtn, &QPushButton::clicked, this, &FarmWindow::stopAll);
     connect(connectBtn, &QPushButton::clicked, this, &FarmWindow::connectWifi);
-    connect(m_ipEdit, &QLineEdit::returnPressed, this, &FarmWindow::connectWifi);
+    connect(m_octStart, &QLineEdit::returnPressed, this, &FarmWindow::connectWifi);
+    connect(m_octEnd, &QLineEdit::returnPressed, this, &FarmWindow::connectWifi);
     connect(enableWifiBtn, &QPushButton::clicked, this, &FarmWindow::enableWifiSelected);
     connect(keepScreenOnBtn, &QPushButton::clicked, this, &FarmWindow::keepScreenOnSelected);
     connect(restoreScreenTimeoutBtn, &QPushButton::clicked, this, &FarmWindow::restoreScreenTimeoutSelected);
@@ -823,24 +908,23 @@ void FarmWindow::rebuildGroups()
         auto *header = new QHBoxLayout();
         header->setSpacing(6);
 
-        // Icons use the native Windows "Segoe MDL2 Assets" font (declared via the
-        // stylesheet's font-family) so the glyphs always render — plain emoji/unicode
-        // fell back to nothing in the app font and the buttons looked empty.
-        const QString iconFontFamily = QStringLiteral("font-family:'Segoe MDL2 Assets';");
+        // Plain BMP Unicode symbols via QChar (encoding-independent — avoids any
+        // source-charset surprise) with WIDE font coverage, so whatever font Qt
+        // resolves always has a glyph. CRITICAL: padding:0;margin:0 — a default
+        // QPushButton has internal padding that, on these small fixed-size buttons,
+        // clipped the glyph down to nothing (that's why they looked empty).
         const QString iconBtnQss =
-            QStringLiteral("QPushButton{background:transparent;border:none;color:#94a3b8;"
-                           "font-size:12px;%1}"
-                           "QPushButton:hover{color:#e2e8f0;}")
-                .arg(iconFontFamily);
+            QStringLiteral("QPushButton{background:transparent;border:none;padding:0;margin:0;"
+                           "color:#94a3b8;font-size:14px;}"
+                           "QPushButton:hover{color:#e2e8f0;}");
 
-        // MDL2 glyphs: ChevronDown E70D / ChevronRight E76C, Edit E70F,
-        // Delete E74D, RedEye E7B3.
-        auto *chevron = new QPushButton(QString(QChar(collapsed ? 0xE76C : 0xE70D)));
-        chevron->setFixedSize(18, 18);
+        // 0x25BE ▾ expanded / 0x25B8 ▸ collapsed, 0x270E ✎ rename, 0x2715 ✕ delete,
+        // 0x25C9 ◉ isolate ("eye").
+        auto *chevron = new QPushButton(QString(QChar(collapsed ? 0x25B8 : 0x25BE)));
+        chevron->setFixedSize(22, 22);
         chevron->setStyleSheet(
-            QStringLiteral("QPushButton{background:transparent;border:none;color:#cbd5e1;"
-                           "font-size:11px;%1}")
-                .arg(iconFontFamily));
+            QStringLiteral("QPushButton{background:transparent;border:none;padding:0;margin:0;"
+                           "color:#cbd5e1;font-size:13px;}"));
         connect(chevron, &QPushButton::clicked, this, [this, name]() {
             if (m_collapsedGroups.contains(name)) {
                 m_collapsedGroups.remove(name);
@@ -857,14 +941,14 @@ void FarmWindow::rebuildGroups()
         countLabel->setStyleSheet(QStringLiteral("color:#94a3b8;font-size:11px;"));
         m_groupCountLabels.insert(name, countLabel);
 
-        auto *editBtn = new QPushButton(QString(QChar(0xE70F)));
-        editBtn->setFixedSize(20, 18);
+        auto *editBtn = new QPushButton(QString(QChar(0x270E)));
+        editBtn->setFixedSize(24, 22);
         editBtn->setToolTip(tr("Renombrar grupo"));
         editBtn->setStyleSheet(iconBtnQss);
         connect(editBtn, &QPushButton::clicked, this, [this, name]() { renameGroup(name); });
 
-        auto *delBtn = new QPushButton(QString(QChar(0xE74D)));
-        delBtn->setFixedSize(20, 18);
+        auto *delBtn = new QPushButton(QString(QChar(0x2715)));
+        delBtn->setFixedSize(24, 22);
         delBtn->setToolTip(tr("Eliminar grupo"));
         delBtn->setStyleSheet(iconBtnQss);
         connect(delBtn, &QPushButton::clicked, this, [this, name]() {
@@ -879,13 +963,13 @@ void FarmWindow::rebuildGroups()
         });
 
         const bool isolated = (m_isolatedGroup == name);
-        auto *eyeBtn = new QPushButton(QString(QChar(0xE7B3)));
-        eyeBtn->setFixedSize(20, 18);
+        auto *eyeBtn = new QPushButton(QString(QChar(0x25C9)));
+        eyeBtn->setFixedSize(24, 22);
         eyeBtn->setToolTip(isolated ? tr("Mostrar todos los teléfonos")
                                     : tr("Ver solo los teléfonos de este grupo"));
         eyeBtn->setStyleSheet(isolated
-            ? QStringLiteral("QPushButton{background:transparent;border:none;color:#3b9dff;"
-                             "font-size:12px;%1}").arg(iconFontFamily)
+            ? QStringLiteral("QPushButton{background:transparent;border:none;padding:0;margin:0;"
+                             "color:#3b9dff;font-size:14px;}")
             : iconBtnQss);
         connect(eyeBtn, &QPushButton::clicked, this, [this, name]() {
             // Toggle the isolate view: hide every tile not in this group.
@@ -1369,18 +1453,181 @@ void FarmWindow::updateConnectStatus()
                              .arg(static_cast<int>(m_pending.size())));
 }
 
+namespace {
+// Parse a dotted IPv4 string into a 32-bit value (big-endian). Returns false on
+// any malformed octet so the caller can report the error.
+bool parseIpv4(const QString &s, quint32 &out)
+{
+    const QStringList parts = s.split('.');
+    if (parts.size() != 4) {
+        return false;
+    }
+    quint32 v = 0;
+    for (const QString &p : parts) {
+        bool ok = false;
+        const int n = p.toInt(&ok);
+        if (!ok || n < 0 || n > 255) {
+            return false;
+        }
+        v = (v << 8) | static_cast<quint32>(n);
+    }
+    out = v;
+    return true;
+}
+
+QString u32ToIp(quint32 v)
+{
+    return QStringLiteral("%1.%2.%3.%4")
+        .arg((v >> 24) & 0xFF)
+        .arg((v >> 16) & 0xFF)
+        .arg((v >> 8) & 0xFF)
+        .arg(v & 0xFF);
+}
+}    // namespace
+
+QStringList FarmWindow::expandWifiTargets(const QString &text) const
+{
+    const QString trimmed = text.trimmed();
+    QStringList out;
+    if (trimmed.isEmpty()) {
+        return out;
+    }
+
+    QString portStr = QStringLiteral("5555");    // adb-over-WiFi default
+    const int dash = trimmed.indexOf('-');
+
+    // No dash → a single host (the original behaviour).
+    if (dash < 0) {
+        QString t = trimmed;
+        if (!t.contains(':')) {
+            t += ':' + portStr;
+        }
+        out << t;
+        return out;
+    }
+
+    // Range "START-END". START is a full IPv4 (optionally with :port); END is
+    // either a full IPv4 or just the final octet (e.g. "192.168.1.50-100").
+    QString left = trimmed.left(dash).trimmed();
+    QString right = trimmed.mid(dash + 1).trimmed();
+    if (left.contains(':')) {
+        portStr = left.section(':', 1, 1);
+        left = left.section(':', 0, 0);
+    }
+    if (right.contains(':')) {
+        right = right.section(':', 0, 0);
+    }
+
+    quint32 start = 0;
+    if (!parseIpv4(left, start)) {
+        return out;    // bad start address → empty list, caller reports it
+    }
+    quint32 end = 0;
+    if (right.contains('.')) {
+        if (!parseIpv4(right, end)) {
+            return out;
+        }
+    } else {
+        bool ok = false;
+        const int last = right.toInt(&ok);
+        if (!ok || last < 0 || last > 255) {
+            return out;
+        }
+        end = (start & 0xFFFFFF00u) | static_cast<quint32>(last);
+    }
+    if (end < start) {
+        return out;
+    }
+    // Cap the sweep so a typo (e.g. .1-254 across subnets) can't spawn thousands
+    // of adb processes.
+    constexpr quint32 kMaxRange = 256;
+    if (end - start + 1 > kMaxRange) {
+        end = start + kMaxRange - 1;
+    }
+    for (quint32 v = start; v <= end; ++v) {
+        out << u32ToIp(v) + ':' + portStr;
+    }
+    return out;
+}
+
 void FarmWindow::connectWifi()
 {
-    QString target = m_ipEdit->text().trimmed();
-    if (target.isEmpty()) {
-        m_statusBar->setText(tr("Enter an ip:port to connect."));
+    const QString a = m_octA->text().trimmed();
+    const QString b = m_octB->text().trimmed();
+    const QString c = m_octC->text().trimmed();
+    const QString d1 = m_octStart->text().trimmed();
+    const QString d2 = m_octEnd->text().trimmed();
+    QString port = m_portEdit->text().trimmed();
+    if (port.isEmpty()) {
+        port = QStringLiteral("5555");
+    }
+    if (a.isEmpty() || b.isEmpty() || c.isEmpty() || d1.isEmpty()) {
+        m_statusBar->setText(tr("Completa la dirección IP inicial."));
         return;
     }
-    if (!target.contains(':')) {
-        target += ":5555";
+    // Build "a.b.c.d1:port" (single) or "a.b.c.d1:port-d2" (range) and let
+    // expandWifiTargets() validate and expand it.
+    QString spec = QStringLiteral("%1.%2.%3.%4:%5").arg(a, b, c, d1, port);
+    if (!d2.isEmpty() && d2 != d1) {
+        spec += '-' + d2;
     }
-    m_adb.execute("", QStringList() << "connect" << target);
-    m_statusBar->setText(tr("connecting to %1…").arg(target));
+    const QStringList targets = expandWifiTargets(spec);
+    if (targets.isEmpty()) {
+        m_statusBar->setText(tr("Dirección IP o rango inválido."));
+        return;
+    }
+    if (targets.size() == 1) {
+        // Single host: keep the lightweight path through the shared AdbProcess.
+        m_adb.execute("", QStringList() << "connect" << targets.first());
+        m_statusBar->setText(tr("connecting to %1…").arg(targets.first()));
+        return;
+    }
+    // Range sweep: the shared AdbProcess runs one command at a time, so probe the
+    // whole range with an independent, throttled pool of `adb connect` processes.
+    m_wifiConnectQueue = targets;
+    m_wifiConnectTotal = static_cast<int>(targets.size());
+    m_wifiConnectDone = 0;
+    m_statusBar->setText(tr("scanning %1 addresses…").arg(m_wifiConnectTotal));
+    pumpWifiConnect();
+}
+
+void FarmWindow::pumpWifiConnect()
+{
+    constexpr int kMaxWifiConnect = 16;    // bound the parallel adb-connect fan-out
+    const QString adb = resolveAdbPath();
+    while (m_wifiConnectActive < kMaxWifiConnect && !m_wifiConnectQueue.isEmpty()) {
+        const QString target = m_wifiConnectQueue.takeFirst();
+        auto *proc = new QProcess(this);
+        ++m_wifiConnectActive;
+        auto done = std::make_shared<bool>(false);
+        auto finish = [this, proc, done]() {
+            if (*done) {
+                return;
+            }
+            *done = true;
+            proc->deleteLater();
+            --m_wifiConnectActive;
+            ++m_wifiConnectDone;
+            if (m_wifiConnectQueue.isEmpty() && m_wifiConnectActive == 0) {
+                m_statusBar->setText(
+                    tr("WiFi scan done (%1 probed) — refreshing.").arg(m_wifiConnectTotal));
+                refreshDevices();    // pick up everything that actually connected
+            } else {
+                m_statusBar->setText(tr("WiFi scan: %1 / %2 probed…")
+                                         .arg(m_wifiConnectDone)
+                                         .arg(m_wifiConnectTotal));
+                pumpWifiConnect();
+            }
+        };
+        connect(proc, &QProcess::finished, this,
+                [finish](int, QProcess::ExitStatus) { finish(); });
+        connect(proc, &QProcess::errorOccurred, this,
+                [finish](QProcess::ProcessError) { finish(); });
+        // adb connect blocks on its own timeout against a dead host; this is just a
+        // backstop so a wedged process never strands a slot forever.
+        QTimer::singleShot(10000, proc, [finish]() { finish(); });
+        proc->start(adb, QStringList() << "connect" << target);
+    }
 }
 
 void FarmWindow::enableWifiSelected()

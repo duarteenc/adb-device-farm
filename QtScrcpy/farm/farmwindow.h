@@ -122,6 +122,8 @@ private:
     void relayout();
     void scheduleRelayout();    // coalesce burst relayouts into one per event-loop turn
     void pumpConnectQueue();
+    QStringList expandWifiTargets(const QString &text) const;   // "ip", "ip:port" or a range
+    void pumpWifiConnect();     // throttled `adb connect` fan-out for an IP range
     bool startConnect(const QString &serial);
     void finishConnect(const QString &serial);   // async continuation after resolution normalize
     void updateConnectStatus();
@@ -141,6 +143,10 @@ private:
     QString m_selected;
     QString m_focusSerial;             // device shown in the embedded host panel
     QString m_wifiSerial;
+    QStringList m_wifiConnectQueue;    // pending ip:port targets for a range sweep
+    int m_wifiConnectActive = 0;       // adb-connect processes currently running
+    int m_wifiConnectTotal = 0;        // size of the current sweep (for progress)
+    int m_wifiConnectDone = 0;         // probed so far in the current sweep
     bool m_groupMode = false;
     bool m_smallViewControl = false;   // grid tiles control their device directly
     bool m_autoMirrorPending = true;   // auto-"Mirror All" once on the first device list
@@ -181,7 +187,16 @@ private:
     bool m_selDragging = false;             // dragging that selection (badge visible)
     FocusPanel *m_focusPanel = nullptr;
     QLabel *m_statusBar = nullptr;
-    QLineEdit *m_ipEdit = nullptr;
+    // GenFarmer-style WiFi connect inputs: port + start/end IP octet boxes.
+    QLineEdit *m_portEdit = nullptr;
+    QLineEdit *m_octA = nullptr;       // start IP octet 1
+    QLineEdit *m_octB = nullptr;       // start IP octet 2
+    QLineEdit *m_octC = nullptr;       // start IP octet 3
+    QLineEdit *m_octStart = nullptr;   // start IP octet 4 (range start)
+    QLineEdit *m_octEndA = nullptr;    // end IP octet 1 (locked, mirrors start)
+    QLineEdit *m_octEndB = nullptr;    // end IP octet 2 (locked, mirrors start)
+    QLineEdit *m_octEndC = nullptr;    // end IP octet 3 (locked, mirrors start)
+    QLineEdit *m_octEnd = nullptr;     // end IP octet 4 (range end)
     QLabel *m_tileSizeValue = nullptr;
     QLabel *m_hostSizeValue = nullptr;
     QLabel *m_qualityValue = nullptr;
