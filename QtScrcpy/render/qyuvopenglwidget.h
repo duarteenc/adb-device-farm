@@ -1,5 +1,7 @@
 #ifndef QYUVOPENGLWIDGET_H
 #define QYUVOPENGLWIDGET_H
+#include <functional>
+
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
@@ -20,6 +22,9 @@ public:
     void setFrameSize(const QSize &frameSize);
     const QSize &frameSize();
     void updateTextures(quint8 *dataY, quint8 *dataU, quint8 *dataV, quint32 linesizeY, quint32 linesizeU, quint32 linesizeV);
+    // Farm: called at the end of every paintGL() so the owner can measure
+    // decode->display latency and count rendered frames.
+    void setOnPainted(std::function<void()> callback) { m_onPainted = std::move(callback); }
 
 protected:
     void initializeGL() override;
@@ -30,7 +35,7 @@ private:
     void initShader();
     void initTextures();
     void deInitTextures();
-    void updateTexture(GLuint texture, quint32 textureType, quint8 *pixels, quint32 stride);
+    void uploadPlane(GLuint texture, quint32 textureType, quint8 *pixels, quint32 stride);
 
 private:
     // 视频帧尺寸
@@ -46,6 +51,7 @@ private:
 
     // YUV纹理，用于生成纹理贴图
     GLuint m_texture[3] = { 0 };
+    std::function<void()> m_onPainted;
 };
 
 #endif // QYUVOPENGLWIDGET_H
