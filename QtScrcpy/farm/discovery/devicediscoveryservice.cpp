@@ -184,6 +184,7 @@ void DeviceDiscoveryService::onQuickRefreshResult(const QList<adb::AdbDeviceInfo
     }
     m_onlineIds = nowOnline;
     m_lastSnapshot = devices;
+    registry.autoNumber();    // newly seen devices get the lowest free farm numbers (numeric IP order)
     emit snapshotUpdated(devices);
 }
 
@@ -267,6 +268,7 @@ void DeviceDiscoveryService::onScannerFinished(const QStringList &found, qint64 
     m_lastScanMs = ms;
     m_lastScanFound = static_cast<int>(found.size());
     m_lastFullScan = QDateTime::currentDateTime();
+    DeviceRegistry::instance().autoNumber();
     FarmLog::instance().info(QLatin1String(kComponent), QStringLiteral("scan finished: %1 hosts on port in %2 ms%3").arg(found.size()).arg(ms).arg(cancelled ? QStringLiteral(" (cancelled)") : QString()));
 
     // Any known TCP device that did not answer at all is offline (unless mirroring

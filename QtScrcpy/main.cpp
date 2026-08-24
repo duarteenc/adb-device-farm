@@ -189,6 +189,8 @@ int main(int argc, char *argv[])
         // up before any window; discovery/mirroring start once the UI is visible.
         farm::AppContext::Options opts = farmOptions;
         opts.farm = true;
+        a.setApplicationName(QStringLiteral("ADB Device Farm"));
+        a.setApplicationDisplayName(QStringLiteral("ADB Device Farm"));
         farm::AppContext::instance().initialize(opts);
 
         // Startup splash while the window builds and the first `adb devices` runs.

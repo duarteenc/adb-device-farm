@@ -9,6 +9,7 @@
 #include "../adb/adbexecutor.h"
 #include "../adb/adbparsers.h"
 #include "../core/activitylog.h"
+#include "../core/appcontext.h"
 #include "../core/farmlog.h"
 #include "../core/farmsettings.h"
 #include "../core/ipv4.h"
@@ -587,7 +588,8 @@ void DeviceService::onDeviceAppeared(const QString &id)
     }
     cancelReconnect(id);
     const DeviceRecord r = DeviceRegistry::instance().get(id);
-    const bool shouldMirror = m_wanted.contains(id) || (FarmSettings::instance().autoMirror() && r.autoMirror && !m_operatorStopped.contains(id));
+    const bool autoMirror = FarmSettings::instance().autoMirror() && !AppContext::instance().options().noAutoMirror;
+    const bool shouldMirror = m_wanted.contains(id) || (autoMirror && r.autoMirror && !m_operatorStopped.contains(id));
     if (shouldMirror) {
         startMirror(id);
     }

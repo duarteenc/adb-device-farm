@@ -143,10 +143,7 @@ bool AppContext::initialize(const Options &options)
 
     // 4. known devices
     DeviceRegistry::instance().load();
-    if (options.noAutoMirror) {
-        // one-shot override for this launch only
-        settings.setValue(QStringLiteral("discovery/autoMirror"), false);
-    }
+    // --no-auto-mirror is honoured by DeviceService for this launch only (never persisted).
 
     ActivityLog::instance().info(ActivityEntry::System, QStringLiteral("ADB Device Farm %1 started").arg(version()));
     if (m_crashed) {
