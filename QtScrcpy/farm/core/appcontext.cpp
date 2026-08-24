@@ -168,6 +168,9 @@ void AppContext::startServices()
         // The mock layer feeds the registry directly; no ADB/discovery.
         FarmLog::instance().info(QStringLiteral("app"), QStringLiteral("mock mode: %1 simulated devices").arg(m_options.mockDevices));
         MockDeviceProvider::instance().start(m_options.mockDevices, 10);
+        if (FarmSettings::instance().autoMirror() && !m_options.noAutoMirror) {
+            MockDeviceProvider::instance().streamAll(true);    // mock devices follow Auto Mirror like real ones
+        }
         Scheduler::instance().start();
         emit servicesReady();
         return;

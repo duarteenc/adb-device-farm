@@ -101,6 +101,13 @@ void MockDeviceProvider::setStreaming(const QString &id, bool on)
     }
 }
 
+void MockDeviceProvider::streamAll(bool on)
+{
+    for (int i = 0; i < m_count; ++i) {
+        setStreaming(QStringLiteral("mock-%1").arg(i + 1, 3, 10, QLatin1Char('0')), on);
+    }
+}
+
 void MockDeviceProvider::simulateDisconnect(const QString &id, int returnAfterMs)
 {
     const bool wasStreaming = m_streaming.remove(id);

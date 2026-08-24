@@ -39,6 +39,8 @@ public:
     void attach(const QString &id, qsc::DeviceObserver *observer);
     void detach(const QString &id, qsc::DeviceObserver *observer);
     void setStreaming(const QString &id, bool on);
+    /// Start/stop synthetic streams on every mock device (what Auto Mirror does for real ones).
+    void streamAll(bool on);
     bool isStreaming(const QString &id) const { return m_streaming.contains(id); }
     /// Simulate a device dropping and coming back (for reconnect UI testing).
     void simulateDisconnect(const QString &id, int returnAfterMs);
