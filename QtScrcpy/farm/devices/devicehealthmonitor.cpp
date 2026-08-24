@@ -53,6 +53,12 @@ void DeviceHealthMonitor::start()
             refresh(id);
         }
     });
+    connect(&registry, &DeviceRegistry::deviceRemoved, this, [this](const QString &id) {
+        m_inFlight.remove(id);
+        m_identityDone.remove(id);
+        m_lowBatteryFlag.remove(id);
+        m_hotFlag.remove(id);
+    });
     connect(&FarmSettings::instance(), &FarmSettings::changed, this, [this](const QString &key) {
         if (key.startsWith(QLatin1String("health/"))) {
             m_timer.start(std::clamp(FarmSettings::instance().healthIntervalSeconds(), 10, 3600) * 1000 / 6);

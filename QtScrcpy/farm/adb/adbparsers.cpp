@@ -148,7 +148,7 @@ QList<RemoteEntry> parseLsLa(const QString &stdOut)
     // toybox: "drwxrwx--x 4 root sdcard_rw 4096 2026-08-24 10:11 Download"
     // toolbox: "drwxrwx--x root sdcard_rw 2026-08-24 10:11 Download"
     static const QRegularExpression re(
-        QStringLiteral("^([\\-dlcbps][rwxsStT\\-]{9})\\s+(?:\\d+\\s+)?(\\S+)\\s+(\\S+)\\s+(?:(\\d+)\\s+)?(\\d{4}-\\d{2}-\\d{2})\\s+(\\d{2}:\\d{2})\\s+(.+)$"));
+        QStringLiteral("^([\\-dlcbps][rwxsStT\\-]{9})\\s+(?:\\d+\\s+)?(\\S+)\\s+(\\S+)\\s+(?:(\\d+(?:,\\s*\\d+)?)\\s+)?(\\d{4}-\\d{2}-\\d{2})\\s+(\\d{2}:\\d{2})\\s+(.+)$"));
     const QStringList lines = stdOut.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     for (const QString &raw : lines) {
         const QString line = raw.trimmed();
@@ -163,7 +163,7 @@ QList<RemoteEntry> parseLsLa(const QString &stdOut)
         e.permissions = m.captured(1);
         e.isDir = e.permissions.startsWith(QLatin1Char('d'));
         e.isLink = e.permissions.startsWith(QLatin1Char('l'));
-        e.size = m.captured(4).toLongLong();
+        e.size = m.captured(4).contains(QLatin1Char(',')) ? 0 : m.captured(4).toLongLong();    // "major, minor" for device nodes
         e.modified = m.captured(5) + QLatin1Char(' ') + m.captured(6);
         e.name = m.captured(7);
         if (e.isLink) {

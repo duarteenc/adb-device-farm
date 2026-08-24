@@ -38,6 +38,7 @@ FarmSettings::FarmSettings(QObject *parent)
 
 void FarmSettings::setDataDirectory(const QString &dir)
 {
+    QMutexLocker lock(&m_mutex);
     m_dataDir = dir;
     QDir().mkpath(m_dataDir);
     delete m_settings;
@@ -58,18 +59,22 @@ void FarmSettings::ensureStorage() const
 
 QVariant FarmSettings::value(const QString &key, const QVariant &fallback) const
 {
+    QMutexLocker lock(&m_mutex);
     ensureStorage();
     return m_settings->value(key, fallback);
 }
 
 void FarmSettings::setValue(const QString &key, const QVariant &value)
 {
-    ensureStorage();
-    if (m_settings->value(key) == value) {
-        return;
+    {
+        QMutexLocker lock(&m_mutex);
+        ensureStorage();
+        if (m_settings->value(key) == value) {
+            return;
+        }
+        m_settings->setValue(key, value);
+        m_settings->sync();
     }
-    m_settings->setValue(key, value);
-    m_settings->sync();
     emit changed(key);
 }
 

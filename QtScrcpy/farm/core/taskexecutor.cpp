@@ -116,7 +116,11 @@ void TaskExecutor::shutdown(int waitMs)
     }
     for (Lane *lane : lanes) {
         lane->pool->clear();
-        lane->pool->waitForDone(waitMs);
+        if (!lane->pool->waitForDone(waitMs)) {
+            // A worker is wedged in an uninterruptible call. ~QThreadPool would wait
+            // forever and we are exiting anyway: detach the pool so teardown cannot hang.
+            lane->pool->setParent(nullptr);
+        }
     }
 }
 

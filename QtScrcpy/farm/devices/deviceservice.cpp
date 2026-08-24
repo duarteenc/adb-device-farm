@@ -356,8 +356,9 @@ void DeviceService::onCoreConnected(bool success, const QString &serial, const Q
         return;
     }
     m_frameSizes.insert(serial, size);
+    // screenSize stays the physical resolution (wm size, DeviceHealthMonitor): the
+    // automation engine maps coordinates with it. The encoded frame size is frameSize().
     DeviceRegistry::instance().updateRuntime(serial, [&](DeviceRecord &r) {
-        r.screenSize = size;
         if (!deviceName.isEmpty() && (r.model.isEmpty() || r.model.contains(QLatin1Char('-')))) {
             r.model = deviceName;
         }
@@ -385,6 +386,7 @@ void DeviceService::finishStart(const QString &id, bool success, const QString &
         ActivityLog::instance().info(ActivityEntry::Device, tr("Mirroring %1 (%2 ms)").arg(DeviceRegistry::instance().get(id).displayName()).arg(m_lastConnectLatencyMs), id);
         emit mirrorStarted(id, m_frameSizes.value(id));
     } else if (wasStarting) {
+        ConnectionIdAllocator::instance().release(id);    // watchdog / core failure: give the scid+port back
         DeviceRegistry::instance().setState(id, DeviceState::Error, reason);
         ActivityLog::instance().warning(ActivityEntry::Device, tr("Mirror failed on %1: %2").arg(id, reason), id);
         emit mirrorFailed(id, reason);

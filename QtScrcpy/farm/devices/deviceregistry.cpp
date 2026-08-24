@@ -37,6 +37,7 @@ void DeviceRegistry::load()
     m_groups = GroupRepository::loadAll();
     importLegacyGroups();
     m_loaded = true;
+    syncAllSnapshots();
     FarmLog::instance().info(QStringLiteral("registry"), QStringLiteral("loaded %1 known devices, %2 groups").arg(m_devices.size()).arg(m_groups.size()));
     emit loaded();
     for (const QString &id : m_devices.keys()) {
@@ -109,6 +110,30 @@ void DeviceRegistry::markDirty(const QString &id)
     if (!m_flushTimer.isActive()) {
         m_flushTimer.start();
     }
+    syncSnapshot(id);
+}
+
+DeviceRecord DeviceRegistry::snapshot(const QString &id) const
+{
+    QMutexLocker lock(&m_snapshotMutex);
+    return m_snapshot.value(id);
+}
+
+void DeviceRegistry::syncSnapshot(const QString &id)
+{
+    QMutexLocker lock(&m_snapshotMutex);
+    const auto it = m_devices.constFind(id);
+    if (it == m_devices.cend()) {
+        m_snapshot.remove(id);
+    } else {
+        m_snapshot.insert(id, it.value());
+    }
+}
+
+void DeviceRegistry::syncAllSnapshots()
+{
+    QMutexLocker lock(&m_snapshotMutex);
+    m_snapshot = m_devices;
 }
 
 int DeviceRegistry::countInState(DeviceState state) const
@@ -163,6 +188,7 @@ bool DeviceRegistry::updateRuntime(const QString &id, const std::function<void(D
         return false;
     }
     fn(it.value());
+    syncSnapshot(id);
     emit deviceChanged(id);
     return true;
 }
@@ -260,6 +286,7 @@ void DeviceRegistry::setState(const QString &id, DeviceState state, const QStrin
     const DeviceState old = r.state;
     r.stateMessage = message;
     if (old == state) {
+        syncSnapshot(id);
         emit deviceChanged(id);
         return;
     }
@@ -268,6 +295,8 @@ void DeviceRegistry::setState(const QString &id, DeviceState state, const QStrin
     if (deviceStateIsOnline(state)) {
         r.lastSeen = r.lastStateChange;
         markDirty(id);
+    } else {
+        syncSnapshot(id);
     }
     FarmLog::instance().debug(QStringLiteral("registry"), QStringLiteral("%1 -> %2 %3").arg(deviceStateName(old), deviceStateName(state), message), id);
     emit stateChanged(id, old, state);
@@ -281,6 +310,7 @@ void DeviceRegistry::remove(const QString &id)
     }
     m_devices.remove(id);
     m_dirty.remove(id);
+    syncSnapshot(id);
     DeviceRepository::remove(id);
     emit deviceRemoved(id);
 }

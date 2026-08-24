@@ -5,6 +5,7 @@
 #include <QSysInfo>
 
 #include "../adb/adbexecutor.h"
+#include "../automation/workflowengine.h"
 #include "../mock/mockdeviceprovider.h"
 #include "../performance/perfmonitor.h"
 #include "../scheduler/scheduler.h"
@@ -110,6 +111,9 @@ bool AppContext::initialize(const Options &options)
 
     // logging + crash detection
     FarmLog &log = FarmLog::instance();
+    // `--list-devices` / `--scan` may run beside the control center: they must
+    // neither report a crash nor delete the running instance's session marker.
+    log.setSessionMarkerEnabled(!options.listDevices && !options.scan);
     log.open(logDirectory());
     m_crashed = log.previousSessionCrashed();
     log.info(QStringLiteral("app"), QStringLiteral("=== ADB Device Farm %1 starting (Qt %2, %3) ===").arg(version(), QString::fromLatin1(qVersion()), QSysInfo::prettyProductName()));
@@ -195,6 +199,7 @@ void AppContext::shutdown()
     KeepAwakeManager::instance().stop();
     DeviceService::instance().shutdown();
     DeviceRegistry::instance().flush();
+    WorkflowEngine::instance().shutdown();    // cancel workers before the executors stop
     AdbExecutor::instance().stop();
     TaskExecutor::instance().shutdown(3000);
     Database::instance().close();

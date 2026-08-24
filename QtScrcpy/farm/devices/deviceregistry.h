@@ -5,6 +5,7 @@
 
 #include <QHash>
 #include <QList>
+#include <QMutex>
 #include <QObject>
 #include <QSet>
 #include <QStringList>
@@ -36,6 +37,8 @@ public:
 
     bool contains(const QString &id) const { return m_devices.contains(id); }
     DeviceRecord get(const QString &id) const { return m_devices.value(id); }
+    /// Copy of a record that is safe to read from worker threads (automation lanes).
+    DeviceRecord snapshot(const QString &id) const;
     QList<DeviceRecord> all() const { return m_devices.values(); }
     QStringList ids() const { return m_devices.keys(); }
     int count() const { return static_cast<int>(m_devices.size()); }
@@ -96,10 +99,14 @@ signals:
 private:
     explicit DeviceRegistry(QObject *parent = nullptr);
     void markDirty(const QString &id);
+    void syncSnapshot(const QString &id);
+    void syncAllSnapshots();
     void importLegacyGroups();
     static QString colorForIndex(int index);
 
     QHash<QString, DeviceRecord> m_devices;
+    mutable QMutex m_snapshotMutex;
+    QHash<QString, DeviceRecord> m_snapshot;    // mirror of m_devices readable off the GUI thread
     QList<GroupInfo> m_groups;
     QSet<QString> m_dirty;
     QTimer m_flushTimer;

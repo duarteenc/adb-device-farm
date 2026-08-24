@@ -2,6 +2,7 @@
 #define FARM_CORE_FARMSETTINGS_H
 
 #include <QObject>
+#include <QRecursiveMutex>
 #include <QSettings>
 #include <QString>
 #include <QVariant>
@@ -117,6 +118,7 @@ private:
 
     QString m_dataDir;
     mutable QSettings *m_settings = nullptr;
+    mutable QRecursiveMutex m_mutex;    // value() is read from automation workers while the GUI saves
 };
 
 } // namespace farm

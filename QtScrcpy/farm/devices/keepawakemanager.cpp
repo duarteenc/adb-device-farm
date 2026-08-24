@@ -59,6 +59,10 @@ void KeepAwakeManager::start()
             applyPolicy(id);
         }
     });
+    connect(&registry, &DeviceRegistry::deviceRemoved, this, [this](const QString &id) {
+        m_status.remove(id);
+        m_lastApplied.remove(id);
+    });
     connect(&FarmSettings::instance(), &FarmSettings::changed, this, [this](const QString &key) {
         if (key == QLatin1String("keepawake/enabled")) {
             applyAllOnline();

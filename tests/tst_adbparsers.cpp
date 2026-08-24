@@ -80,9 +80,13 @@ private slots:
             "drwxrwx--x 20 root sdcard_rw 4096 2026-08-20 09:00 ..\n"
             "drwxrwx--x  2 root sdcard_rw 4096 2026-08-24 10:11 Download\n"
             "-rw-rw----  1 root sdcard_rw 12345 2026-08-23 18:30 my photo.jpg\n"
-            "lrwxrwxrwx  1 root root 21 2026-01-01 00:00 link -> /sdcard/Download\n");
+            "lrwxrwxrwx  1 root root 21 2026-01-01 00:00 link -> /sdcard/Download\n"
+            "crw-rw----  1 root root 10, 61 2026-08-24 10:11 ashmem\n");
         const QList<RemoteEntry> e = parseLsLa(toybox);
-        QCOMPARE(e.size(), 3);
+        QCOMPARE(e.size(), 4);
+        QCOMPARE(e[3].name, QStringLiteral("ashmem"));    // device node: no size column
+        QCOMPARE(e[3].size, qint64(0));
+        QVERIFY(e[3].permissions.startsWith(QLatin1Char('c')));
         QVERIFY(e[0].isDir);
         QCOMPARE(e[0].name, QStringLiteral("Download"));
         QCOMPARE(e[1].name, QStringLiteral("my photo.jpg"));

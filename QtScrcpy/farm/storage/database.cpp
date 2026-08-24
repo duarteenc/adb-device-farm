@@ -8,9 +8,36 @@
 #include <QFileInfo>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <atomic>
+#include <QThreadStorage>
 #include <QThread>
 
 #include "../core/farmlog.h"
+
+namespace {
+std::atomic<bool> s_registryAlive{false};
+QAtomicInt s_connectionCounter;
+
+// Owns one thread's connection name; QThreadStorage deletes it when the thread
+// ends (pool threads expire after 30 s), which closes and unregisters the
+// connection instead of leaking it until exit — and a recycled OS thread id
+// can never adopt a connection created on a dead thread.
+struct ThreadConnection
+{
+    QString name;
+    ~ThreadConnection()
+    {
+        if (s_registryAlive.load() && !name.isEmpty() && QSqlDatabase::contains(name)) {
+            {
+                QSqlDatabase db = QSqlDatabase::database(name, false);
+                db.close();
+            }
+            QSqlDatabase::removeDatabase(name);
+        }
+    }
+};
+QThreadStorage<ThreadConnection *> s_threadConnection;
+} // namespace
 
 namespace farm {
 
@@ -169,6 +196,7 @@ bool Database::open(const QString &filePath)
     m_path = filePath;
     QDir().mkpath(QFileInfo(filePath).absolutePath());
     m_open = true;    // so connection() works below
+    s_registryAlive = true;
     lock.unlock();
 
     QSqlDatabase db = connection();
@@ -188,6 +216,10 @@ bool Database::open(const QString &filePath)
 
 void Database::close()
 {
+    s_registryAlive = false;    // expiring pool threads must not touch the registry from now on
+    if (s_threadConnection.hasLocalData()) {
+        s_threadConnection.setLocalData(nullptr);
+    }
     QMutexLocker lock(&m_mutex);
     m_open = false;
     const QStringList names = QSqlDatabase::connectionNames();
@@ -204,12 +236,18 @@ void Database::close()
     }
 }
 
+
 QSqlDatabase Database::connection()
 {
     if (!m_open) {
         return QSqlDatabase();
     }
-    const QString name = QStringLiteral("farm-%1").arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
+    if (!s_threadConnection.hasLocalData()) {
+        auto *tc = new ThreadConnection;
+        tc->name = QStringLiteral("farm-%1-%2").arg(reinterpret_cast<quintptr>(QThread::currentThreadId())).arg(s_connectionCounter.fetchAndAddRelaxed(1) + 1);
+        s_threadConnection.setLocalData(tc);
+    }
+    const QString name = s_threadConnection.localData()->name;
     if (QSqlDatabase::contains(name)) {
         QSqlDatabase db = QSqlDatabase::database(name);
         if (db.isOpen()) {
@@ -312,9 +350,20 @@ bool Database::backupTo(const QString &destinationFile)
     if (!db.isOpen()) {
         return false;
     }
-    QSqlQuery q(db);
-    q.exec(QStringLiteral("PRAGMA wal_checkpoint(TRUNCATE)"));
     QFile::remove(destinationFile);
+    QSqlQuery q(db);
+    // VACUUM INTO writes a transactionally consistent copy (main file + WAL content)
+    // even while other threads are writing; a plain file copy could miss the WAL.
+    QString quoted = destinationFile;
+    quoted.replace(QLatin1Char('\''), QLatin1String("''"));
+    if (q.exec(QStringLiteral("VACUUM INTO '%1'").arg(quoted)) && QFileInfo::exists(destinationFile)) {
+        return true;
+    }
+    FarmLog::instance().warning(QStringLiteral("storage"), QStringLiteral("VACUUM INTO failed (%1); falling back to checkpoint + copy").arg(q.lastError().text()));
+    QSqlQuery cp(db);
+    if (cp.exec(QStringLiteral("PRAGMA wal_checkpoint(TRUNCATE)")) && cp.next() && cp.value(0).toInt() != 0) {
+        FarmLog::instance().warning(QStringLiteral("storage"), QStringLiteral("checkpoint busy: the backup may miss the newest rows"));
+    }
     return QFile::copy(m_path, destinationFile);
 }
 

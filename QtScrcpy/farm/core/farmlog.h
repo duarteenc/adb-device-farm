@@ -55,6 +55,8 @@ public:
 
     /// Detects an unclean shutdown from the previous session (lock file left behind).
     bool previousSessionCrashed() const { return m_previousCrash; }
+    /// Off for short-lived CLI runs that share the data directory with the GUI (call before open()).
+    void setSessionMarkerEnabled(bool enabled) { m_sessionMarker = enabled; }
     /// Called at clean exit so the next start doesn't report a crash.
     void markCleanShutdown();
 
@@ -71,6 +73,7 @@ private:
     int m_maxFiles = 5;
     Level m_minLevel = Debug;
     bool m_previousCrash = false;
+    bool m_sessionMarker = true;
     QtMessageHandler m_previousHandler = nullptr;
 };
 

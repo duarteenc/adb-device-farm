@@ -69,11 +69,14 @@ bool FarmLog::open(const QString &directory, qint64 maxBytes, int maxFiles)
     m_maxFiles = std::max(1, maxFiles);
 
     // Crash detection: a lock file left behind means the last run did not exit cleanly.
-    QFile lockFile(m_directory + QLatin1Char('/') + QLatin1String(kLockFileName));
-    m_previousCrash = lockFile.exists();
-    if (lockFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        lockFile.write(QDateTime::currentDateTime().toString(Qt::ISODate).toUtf8());
-        lockFile.close();
+    m_previousCrash = false;
+    if (m_sessionMarker) {
+        QFile lockFile(m_directory + QLatin1Char('/') + QLatin1String(kLockFileName));
+        m_previousCrash = lockFile.exists();
+        if (lockFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            lockFile.write(QDateTime::currentDateTime().toString(Qt::ISODate).toUtf8());
+            lockFile.close();
+        }
     }
 
     m_file.setFileName(currentFile());
@@ -101,7 +104,7 @@ void FarmLog::close()
 void FarmLog::markCleanShutdown()
 {
     QMutexLocker lock(&m_mutex);
-    if (!m_directory.isEmpty()) {
+    if (m_sessionMarker && !m_directory.isEmpty()) {
         QFile::remove(m_directory + QLatin1Char('/') + QLatin1String(kLockFileName));
     }
 }
