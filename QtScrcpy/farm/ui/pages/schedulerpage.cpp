@@ -15,6 +15,7 @@
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTimeEdit>
+#include <QUuid>
 #include <QVBoxLayout>
 
 #include "automation/workflowengine.h"
@@ -188,20 +189,23 @@ SchedulerPage::SchedulerPage(QWidget *parent)
             QMessageBox::warning(this, tr("Schedule"), tr("Create a workflow first (Automations page)."));
             return;
         }
+        if (s.id.isEmpty()) {
+            s.id = QUuid::createUuid().toString(QUuid::WithoutBraces);    // save() takes a copy: the id must exist here
+        }
+        m_editingId = s.id;    // before save(): the schedulesChanged -> reload() selects the new row
         Scheduler::instance().save(s);
-        m_editingId = s.id;
         refreshCombos();
         reload();
     });
     connect(newBtn, &QPushButton::clicked, this, [this]() {
+        m_table->setCurrentItem(nullptr);    // clears the current index too, so the handler below sees no row
         m_editingId.clear();
         loadIntoForm(Schedule());
-        m_table->clearSelection();
     });
     connect(m_table, &QTableWidget::itemSelectionChanged, this, [this]() {
         const int row = m_table->currentRow();
-        if (row < 0) {
-            return;
+        if (row < 0 || m_table->selectedItems().isEmpty() || !m_table->item(row, 0)) {
+            return;    // a deselect must never reload the old schedule into the form
         }
         const QString id = m_table->item(row, 0)->data(Qt::UserRole).toString();
         m_editingId = id;

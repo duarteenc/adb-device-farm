@@ -429,6 +429,7 @@ static int runCliMode(const farm::AppContext::Options &opt)
     int exitCode = 0;
     QEventLoop loop;
     auto printDevices = [&]() {
+        farm::DeviceRegistry::instance().autoNumber();    // a fresh registry (portable/CLI) has no numbers yet
         const QList<farm::DeviceRecord> all = farm::DeviceRegistry::instance().all();
         QStringList ids;
         for (const farm::DeviceRecord &r : all) {

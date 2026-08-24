@@ -284,10 +284,10 @@ void AutomationsPage::reloadLibrary()
         }
         ++row;
     }
-    m_library->blockSignals(false);
     if (select >= 0) {
-        m_library->setCurrentRow(select);
+        m_library->setCurrentRow(select);    // still blocked: the editor already shows this workflow
     }
+    m_library->blockSignals(false);
 }
 
 bool AutomationsPage::confirmDiscard()
@@ -316,15 +316,11 @@ void AutomationsPage::loadSelected()
         return;
     }
     if (!confirmDiscard()) {
-        m_library->blockSignals(true);
-        for (int i = 0; i < m_library->count(); ++i) {
-            if (m_library->item(i)->data(Qt::UserRole).toString() == m_currentId) {
-                m_library->setCurrentRow(i);
-            }
-        }
-        m_library->blockSignals(false);
+        selectLibraryRow(m_currentId);
         return;
     }
+    // confirmDiscard() may have saved + reloaded the library (which deleted `item` and
+    // re-selected the previous row): only `id` is used from here on.
     const WorkflowRow row = WorkflowRepository::load(id);
     QString err;
     Workflow w = Workflow::fromJsonText(row.json, &err);
@@ -336,10 +332,27 @@ void AutomationsPage::loadSelected()
     m_editor->setWorkflow(w);
     m_title->setText(tr("Automations — %1").arg(w.name));
     m_dirtyLabel->clear();
+    selectLibraryRow(id);    // keep the list's highlight in sync with the editor
 }
 
-void AutomationsPage::openWorkflow(const Workflow &workflow, bool markNew)
+void AutomationsPage::selectLibraryRow(const QString &id)
 {
+    const QSignalBlocker blocker(m_library);
+    for (int i = 0; i < m_library->count(); ++i) {
+        if (m_library->item(i)->data(Qt::UserRole).toString() == id) {
+            m_library->setCurrentRow(i);
+            return;
+        }
+    }
+}
+
+bool AutomationsPage::openWorkflow(const Workflow &workflow, bool markNew)
+{
+    // Import, AI generation, macro recording and duplication all land here: never
+    // replace unsaved edits silently.
+    if (!confirmDiscard()) {
+        return false;
+    }
     Workflow w = workflow;
     if (w.id.isEmpty()) {
         w.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -354,6 +367,7 @@ void AutomationsPage::openWorkflow(const Workflow &workflow, bool markNew)
     m_editor->setWorkflow(w);
     m_title->setText(tr("Automations — %1").arg(w.name));
     m_dirtyLabel->setText(markNew ? tr("new — review and Save") : QString());
+    return true;
 }
 
 bool AutomationsPage::saveCurrent(bool silent)
@@ -385,9 +399,6 @@ bool AutomationsPage::saveCurrent(bool silent)
 
 void AutomationsPage::newWorkflow()
 {
-    if (!confirmDiscard()) {
-        return;
-    }
     bool ok = false;
     const QString name = QInputDialog::getText(this, tr("New workflow"), tr("Name:"), QLineEdit::Normal, tr("New workflow"), &ok).trimmed();
     if (!ok || name.isEmpty()) {
@@ -529,7 +540,9 @@ void AutomationsPage::generateWithAi()
     if (!ok || request.trimmed().isEmpty()) {
         return;
     }
-    m_dirtyLabel->setText(tr("asking %1…").arg(ai.providerName()));
+    if (!m_editor->isDirty()) {
+        m_dirtyLabel->setText(tr("asking %1…").arg(ai.providerName()));
+    }
     ai.generateWorkflow(request, this, [this](Workflow w, QString error, QString raw) {
         if (!error.isEmpty() && w.nodes.isEmpty()) {
             QMessageBox::warning(this, tr("AI"), error + (raw.isEmpty() ? QString() : QStringLiteral("\n\n") + raw.left(800)));
@@ -545,10 +558,8 @@ void AutomationsPage::generateWithAi()
             msg += QStringLiteral("\n\n") + tr("⚠ It contains potentially destructive steps that will require confirmation before running:\n• %1").arg(risky.join(QStringLiteral("\n• ")));
         }
         msg += QStringLiteral("\n\n") + tr("Open it in the editor for review? Nothing runs until you press Run.");
-        if (QMessageBox::question(this, tr("AI-generated workflow"), msg) == QMessageBox::Yes) {
-            openWorkflow(w, true);
-        } else {
-            m_dirtyLabel->clear();
+        if (QMessageBox::question(this, tr("AI-generated workflow"), msg) != QMessageBox::Yes || !openWorkflow(w, true)) {
+            m_dirtyLabel->setText(m_editor->isDirty() ? tr("● unsaved changes") : QString());
         }
     });
 }

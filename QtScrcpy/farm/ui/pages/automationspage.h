@@ -31,7 +31,7 @@ class AutomationsPage : public QWidget
 public:
     explicit AutomationsPage(QWidget *parent = nullptr);
     void setTargets(const QStringList &ids);
-    void openWorkflow(const Workflow &workflow, bool markNew);
+    bool openWorkflow(const Workflow &workflow, bool markNew);    // false = the operator kept the current edits
 
 signals:
     void selectionNeeded();
@@ -52,6 +52,7 @@ private:
     void showRun(AutomationRun *run);
     void refreshRunDevices();
     bool confirmDiscard();
+    void selectLibraryRow(const QString &id);    // move the list's current row without firing loadSelected()
 
     QListWidget *m_library = nullptr;
     WorkflowEditor *m_editor = nullptr;

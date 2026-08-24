@@ -228,14 +228,24 @@ void FilesPage::navigate(const QString &path)
 void FilesPage::reload()
 {
     const QString id = referenceId();
+    const int gen = ++m_listGeneration;
     if (id.isEmpty()) {
+        m_entries.clear();
         m_table->setRowCount(0);
         m_status->setText(tr("No online device to browse."));
         return;
     }
-    m_status->setText(tr("Listing %1 on %2…").arg(m_path, id));
-    DeviceCommands::listDirectory(id, m_path, this, [this, id](QList<adb::RemoteEntry> entries, QString error) {
+    const QString path = m_path;
+    m_status->setText(tr("Listing %1 on %2…").arg(path, id));
+    DeviceCommands::listDirectory(id, path, this, [this, id, path, gen](QList<adb::RemoteEntry> entries, QString error) {
+        if (gen != m_listGeneration) {
+            return;    // a newer navigate()/device switch superseded this reply
+        }
         if (!error.isEmpty()) {
+            // Never leave another directory's rows under the new path: Delete/Download
+            // build their targets from m_path + row name.
+            m_entries.clear();
+            m_table->setRowCount(0);
             m_status->setText(tr("ls failed: %1").arg(error));
             return;
         }
@@ -252,7 +262,7 @@ void FilesPage::reload()
             m_table->setItem(i, 2, new QTableWidgetItem(e.modified));
             m_table->setItem(i, 3, new QTableWidgetItem(e.permissions));
         }
-        m_status->setText(tr("%n item(s) in %1 on %2", nullptr, static_cast<int>(entries.size())).arg(m_path, id));
+        m_status->setText(tr("%n item(s) in %1 on %2", nullptr, static_cast<int>(entries.size())).arg(path, id));
     });
 }
 

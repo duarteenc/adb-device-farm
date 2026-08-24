@@ -45,6 +45,7 @@ private:
     QLabel *m_status = nullptr;
     QLabel *m_targetLabel = nullptr;
     QList<adb::RemoteEntry> m_entries;
+    int m_listGeneration = 0;    // invalidates in-flight ls replies on navigate / device switch
 };
 
 } // namespace farm

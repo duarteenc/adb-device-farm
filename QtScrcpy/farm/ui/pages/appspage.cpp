@@ -214,8 +214,12 @@ void AppsPage::reloadPackages()
         m_status->setText(tr("No online device to read packages from."));
         return;
     }
+    const bool third = m_thirdParty->isChecked();
     m_status->setText(tr("Loading packages from %1…").arg(id));
-    DeviceCommands::listPackages(id, m_thirdParty->isChecked(), this, [this, id](QList<adb::PackageInfo> list, QString error) {
+    DeviceCommands::listPackages(id, third, this, [this, id, third](QList<adb::PackageInfo> list, QString error) {
+        if (id != referenceId() || third != m_thirdParty->isChecked()) {
+            return;    // stale reply: the reference device or the filter changed while pm ran
+        }
         if (!error.isEmpty()) {
             m_status->setText(tr("pm list packages failed on %1: %2").arg(id, error));
             return;
