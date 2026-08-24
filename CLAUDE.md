@@ -90,6 +90,13 @@ Data lives in `%APPDATA%\ADBDeviceFarm` (`settings.ini`, `farm.db`, `logs\`,
 - `/W3 /WX` everywhere: cast `qsizetype`→`int`, no unused vars, `[[nodiscard]]` results must be used.
 - `farmcore` is compiled as C++20 (C++/WinRT coroutines); consumers only need C++17.
 - Never touch `qsc::IDeviceManage`/`IDevice` off the GUI thread; use `AdbExecutor` for blocking work.
+- Worker threads read device records through `DeviceRegistry::snapshot(id)` (mutex-protected copy), never
+  `get()`; settings reads are serialised inside `FarmSettings`; each thread gets its own SQLite connection
+  (`Database::connection()`, closed with the thread).
+- `AdbExecutor::run(cmd, context, cb)`: pass the receiver as `context` — the callback is dropped if it dies;
+  `nullptr` means "call inline on the executor thread" and the lambda must not capture `this`.
+- An `AutomationRun` is deleted through `deleteWhenIdle()` only after its last worker reported back;
+  `WorkflowEngine::shutdown()` runs before the executors stop.
 - Every device operation needs a timeout + cancellation (`CancellationToken`) — see `AdbCommand::timeoutMs`.
 - Bulk destructive actions ask for confirmation with the device count (`DevicesPage::confirmBulk`).
 - Tests live in `tests/` (Qt Test, `farm_add_test` in `tests/CMakeLists.txt`); `tst_workflow` runs the
