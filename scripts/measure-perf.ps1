@@ -52,13 +52,23 @@ if (-not $NoConnect) {
         }
         $Hosts = $probe
     }
-    # Disconnect everything, then connect exactly the requested count.
+    # Disconnect everything, then connect exactly the requested count. (start-server first:
+    # a cold adb prints "daemon not running" to stderr, which -ErrorAction Stop treats as fatal.
+    # Via cmd, not Start-Process -Wait: that would wait for the detached daemon forever.)
+    & cmd.exe /c "`"$adb`" start-server >nul 2>&1"
     & $adb disconnect *> $null
     $targets = $Hosts | Select-Object -First $Devices
-    foreach ($h in $targets) { Start-Job -ScriptBlock { param($a, $t) & $a connect $t } -ArgumentList $adb, "${h}:$Port" | Out-Null }
-    Get-Job | Wait-Job -Timeout 20 | Out-Null
-    Get-Job | Remove-Job -Force
-    $online = (& $adb devices) | Select-String "`tdevice$" | Measure-Object | Select-Object -ExpandProperty Count
+    # Plain adb.exe processes, not PowerShell jobs: a job costs a whole PowerShell start-up
+    # each, which on a small machine takes longer than the connect itself and used to leave
+    # most of a 20+ device set unconnected when the 20 s wait expired.
+    $connectProcs = @()
+    foreach ($h in $targets) { $connectProcs += Start-Process -FilePath $adb -ArgumentList @('connect', "${h}:$Port") -WindowStyle Hidden -PassThru }
+    $deadline = (Get-Date).AddSeconds(15 + $targets.Count)
+    do {
+        Start-Sleep -Seconds 1
+        $online = (& $adb devices) | Select-String "`tdevice$" | Measure-Object | Select-Object -ExpandProperty Count
+    } while ($online -lt $targets.Count -and (Get-Date) -lt $deadline)
+    foreach ($cp in $connectProcs) { if (-not $cp.HasExited) { $cp.Kill() } }
     Write-Host "connected $online / $($targets.Count) devices"
 }
 
