@@ -112,6 +112,14 @@ DevicesPage::DevicesPage(QWidget *parent)
     DeviceService &service = DeviceService::instance();
     connect(&service, &DeviceService::mirrorStarted, this, &DevicesPage::onMirrorStarted);
     connect(&service, &DeviceService::mirrorStopped, this, &DevicesPage::onMirrorStopped);
+    // Mock mode: streams that Auto Mirror started before the page existed need their tiles attached.
+    connect(&AppContext::instance(), &AppContext::servicesReady, this, [this]() {
+        if (AppContext::instance().isMock()) {
+            for (const QString &id : DeviceRegistry::instance().idsInState(DeviceState::Mirroring)) {
+                onMirrorStarted(id, QSize());
+            }
+        }
+    });
     connect(&service, &DeviceService::queueChanged, this, &DevicesPage::refreshCounts);
     connect(&DeviceDiscoveryService::instance(), &DeviceDiscoveryService::statusMessage, this, [this](const QString &t) {
         m_statusLabel->setText(t);

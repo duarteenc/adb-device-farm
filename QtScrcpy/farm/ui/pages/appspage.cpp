@@ -18,6 +18,7 @@
 #include <QTableWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QTimer>
 
 #include "core/farmsettings.h"
 #include "devices/devicecommands.h"
@@ -156,7 +157,11 @@ AppsPage::AppsPage(QWidget *parent)
         }
         BatchJobDialog::show(DeviceCommands::installApk(ids, path), this);
     });
-    connect(&DeviceRegistry::instance(), &DeviceRegistry::stateChanged, this, [this](const QString &, DeviceState, DeviceState) { setTargets(m_targets); });
+    auto *targetsTimer = new QTimer(this);    // coalesce state bursts: one refresh per 150 ms
+    targetsTimer->setSingleShot(true);
+    targetsTimer->setInterval(150);
+    connect(targetsTimer, &QTimer::timeout, this, [this]() { setTargets(m_targets); });
+    connect(&DeviceRegistry::instance(), &DeviceRegistry::stateChanged, targetsTimer, [targetsTimer](const QString &, DeviceState, DeviceState) { targetsTimer->start(); });
     setTargets(QStringList());
 }
 

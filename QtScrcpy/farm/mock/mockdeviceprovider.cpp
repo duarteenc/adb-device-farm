@@ -27,6 +27,14 @@ void MockDeviceProvider::start(int count, int fps, int width, int height)
 {
     stop();
     m_count = std::clamp(count, 1, 1000);
+    if (m_count > 100) {
+        // Frames are synthesised on the GUI thread; above 100 streams a 360 px / 10 fps
+        // pattern saturates one core and the window never paints. Real devices are not
+        // affected (their frames come from decoder threads).
+        fps = std::min(fps, 3);
+        width = std::min(width, 180);
+        height = std::min(height, 320);
+    }
     m_fps = std::clamp(fps, 1, 60);
     m_width = (width / 2) * 2;
     m_height = (height / 2) * 2;

@@ -14,6 +14,7 @@
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QVBoxLayout>
+#include <QTimer>
 
 #include "core/farmsettings.h"
 #include "devices/devicecommands.h"
@@ -157,7 +158,11 @@ AdbConsolePage::AdbConsolePage(QWidget *parent)
         m_command->setText(it->text());
         execute();
     });
-    connect(&DeviceRegistry::instance(), &DeviceRegistry::stateChanged, this, [this](const QString &, DeviceState, DeviceState) { rebuildTargetCombo(); });
+    auto *comboTimer = new QTimer(this);    // coalesce state bursts: one combo rebuild per 150 ms
+    comboTimer->setSingleShot(true);
+    comboTimer->setInterval(150);
+    connect(comboTimer, &QTimer::timeout, this, [this]() { rebuildTargetCombo(); });
+    connect(&DeviceRegistry::instance(), &DeviceRegistry::stateChanged, comboTimer, [comboTimer](const QString &, DeviceState, DeviceState) { comboTimer->start(); });
     connect(&DeviceRegistry::instance(), &DeviceRegistry::groupsChanged, this, &AdbConsolePage::rebuildTargetCombo);
 
     m_historyItems = FarmSettings::instance().value(QStringLiteral("console/history")).toStringList();

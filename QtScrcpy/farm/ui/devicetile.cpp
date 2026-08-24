@@ -355,8 +355,12 @@ void DeviceTile::onFrame(int width, int height, uint8_t *dataY, uint8_t *dataU, 
     }
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (m_priority == RenderPriority::Offscreen) {
+        // A tile that has never been in the viewport keeps its placeholder: creating an
+        // OpenGL surface (and the relayout its first frame triggers) for every off-screen
+        // tile is what pins the GUI thread with hundreds of devices. It gets its surface
+        // on the first frame after it scrolls into view.
         const int fps = FarmSettings::instance().offscreenFps();
-        if (fps <= 0 || (now - m_lastUploadMs) < (1000 / fps)) {
+        if (!m_video || fps <= 0 || (now - m_lastUploadMs) < (1000 / fps)) {
             perf.countDropped();
             m_stale = true;
             return;

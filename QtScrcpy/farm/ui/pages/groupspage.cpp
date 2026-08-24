@@ -23,6 +23,7 @@
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QVBoxLayout>
+#include <QTimer>
 
 #include "devices/deviceregistry.h"
 #include "devices/keepawakemanager.h"
@@ -225,9 +226,14 @@ GroupsPage::GroupsPage(QWidget *parent)
     connect(m_bitrate, &QSpinBox::valueChanged, this, [settingsChanged](int) { settingsChanged(); });
 
     connect(&DeviceRegistry::instance(), &DeviceRegistry::groupsChanged, this, &GroupsPage::reloadGroups);
-    connect(&DeviceRegistry::instance(), &DeviceRegistry::deviceChanged, this, [this](const QString &) { reloadMembers(); });
-    connect(&DeviceRegistry::instance(), &DeviceRegistry::deviceAdded, this, [this](const QString &) { reloadMembers(); });
-    connect(&DeviceRegistry::instance(), &DeviceRegistry::deviceRemoved, this, [this](const QString &) { reloadMembers(); });
+    // Coalesce bursts (300 devices coming online = 300 signals): one rebuild per 150 ms.
+    auto *membersTimer = new QTimer(this);
+    membersTimer->setSingleShot(true);
+    membersTimer->setInterval(150);
+    connect(membersTimer, &QTimer::timeout, this, [this]() { reloadMembers(); });
+    connect(&DeviceRegistry::instance(), &DeviceRegistry::deviceChanged, membersTimer, [membersTimer](const QString &) { membersTimer->start(); });
+    connect(&DeviceRegistry::instance(), &DeviceRegistry::deviceAdded, membersTimer, [membersTimer](const QString &) { membersTimer->start(); });
+    connect(&DeviceRegistry::instance(), &DeviceRegistry::deviceRemoved, membersTimer, [membersTimer](const QString &) { membersTimer->start(); });
     reloadGroups();
 }
 
