@@ -33,6 +33,23 @@ foreach ($opt in '333FarmerWallpaperHelper.apk','wallpaper_template.svg') {
     $p = Join-Path $bin $opt
     if (Test-Path $p) { Copy-Item $p $dest }
 }
+# 2b. Visual C++ runtime: app-local CRT DLLs next to the exe (works on a clean PC without the
+#     redistributable) plus vc_redist.x64.exe under redist\ for the installer to run quietly.
+$vsRoot = $null
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) { $vsRoot = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null | Select-Object -First 1) }
+if (-not $vsRoot) { $vsRoot = Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio\*\*" -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName 'VC\Redist') } | Select-Object -First 1 -ExpandProperty FullName }
+$crtCopied = 0
+if ($vsRoot) {
+    $crtDir = Get-ChildItem (Join-Path $vsRoot 'VC\Redist\MSVC') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d' } | Sort-Object Name -Descending | Select-Object -First 1
+    if ($crtDir) {
+        $crt = Get-ChildItem (Join-Path $crtDir.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($crt) { Get-ChildItem $crt.FullName -Filter '*.dll' | ForEach-Object { Copy-Item $_.FullName $dest; $crtCopied++ } }
+        $redist = Join-Path $crtDir.FullName 'vc_redist.x64.exe'
+        if (Test-Path $redist) { New-Item -ItemType Directory -Force (Join-Path $dest 'redist') | Out-Null; Copy-Item $redist (Join-Path $dest 'redist\vc_redist.x64.exe') }
+    }
+}
+if ($crtCopied -eq 0) { Write-Warning 'Visual C++ runtime DLLs not found: the package will need the VC++ 2015-2022 x64 redistributable on the target PC' } else { Write-Host "VC++ runtime: $crtCopied DLLs + redist installer bundled" }
 # 3. config + keymaps used by the upstream single-device UI (relative paths in main.cpp)
 New-Item -ItemType Directory -Force (Join-Path $dest 'config') | Out-Null
 Copy-Item (Join-Path $repo 'config\config.ini') (Join-Path $dest 'config\config.ini')

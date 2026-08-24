@@ -28,6 +28,12 @@ ArchitecturesInstallIn64BitMode=x64compatible
 LicenseFile=..\LICENSE
 UninstallDisplayIcon={app}\{#AppExe}
 WizardStyle=modern
+; No admin needed: installs per-user (%LOCALAPPDATA%\Programs) unless the user picks "all users".
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+MinVersion=10.0
+CloseApplications=yes
+RestartApplications=no
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
@@ -42,4 +48,17 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--farm"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
+; Visual C++ 2015-2022 x64 runtime: the app also ships the CRT DLLs app-local, so this is belt and braces
+; (it registers the runtime system-wide when the user has the rights; harmless when already present).
+Filename: "{app}\redist\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing the Visual C++ runtime..."; Flags: waituntilterminated skipifdoesntexist; Check: not VCRuntimeInstalled
 Filename: "{app}\{#AppExe}"; Parameters: "--farm"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function VCRuntimeInstalled: Boolean;
+var
+  installed: Cardinal;
+begin
+  Result := False;
+  if RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', installed) then
+    Result := installed = 1;
+end;

@@ -51,12 +51,21 @@ Android device → scrcpy-server (MediaCodec H.264) → ADB → FFmpeg decode �
 
 ## Install
 
-**Portable**: download/unzip `ADBDeviceFarm-portable-<version>.zip` (or build it with
-`scripts\package-portable.ps1`) and run `ADB Device Farm.cmd`. Settings, database and logs
-stay in `.\data`. **Installer**: `installer\adb-device-farm.iss` (Inno Setup 6).
+**Installer (recommended)**: download `ADBDeviceFarm-setup-<version>.exe` from the
+[Releases](https://github.com/duarteenc/adb-device-farm/releases) page and run it — no
+administrator rights needed (per-user install), nothing else to install: Qt, FFmpeg, adb,
+scrcpy-server and the Visual C++ runtime are bundled. Settings, database and logs go to
+`%APPDATA%\ADBDeviceFarm`.
 
-Requirements: Windows 10/11 x64, OpenGL 2.0 (a software fallback ships), phones with USB
-debugging (USB) and/or *ADB over network* on port 5555 (WiFi).
+**Portable**: download/unzip `ADBDeviceFarm-portable-<version>.zip` and run
+`ADB Device Farm.cmd`. Settings, database and logs stay in `.\data` next to the exe.
+
+Both are produced by `scripts\package-installer.ps1` (portable zip via
+`scripts\package-portable.ps1`, installer via `installer\adb-device-farm.iss` + Inno Setup 6).
+
+Requirements: Windows 10/11 x64 with a GPU driver that provides OpenGL 2.0+ (any
+maintained Windows 10 PC), phones with USB debugging (USB) and/or *ADB over network* on
+port 5555 (WiFi) on the same LAN as the PC.
 
 ## Development setup
 
