@@ -91,6 +91,8 @@ the device again.
 → `QYUVOpenGLWidget::updateTextures` (now ONE `makeCurrent` per frame instead
 of three) → `paintGL`. `DeviceGrid` assigns a render priority from the scroll
 viewport: **Focused/Visible** upload every frame, **Offscreen** (one screen
+  A tile allocates its OpenGL surface on its first frame inside the viewport; off-screen tiles keep
+  the placeholder until they scroll in (hundreds of tiles never create hundreds of GL contexts).
 away) upload at Settings › Performance › off-screen fps, **Hidden** upload
 nothing. Decoding continues everywhere so input never stalls; a stale tile that
 scrolls back into view gets `replayLastFrame()` immediately. The core's

@@ -33,7 +33,8 @@ cmd /c scripts\test.bat             # ctest (11 Qt Test binaries under output\x6
 
 Binary: `output\x64\RelWithDebInfo\QtScrcpy.exe`. CLI: `--farm` (control center),
 `--list-devices`, `--scan`, `--run-workflow "Name" [--targets …]`,
-`--farm --mock-devices 100` (simulated devices, no ADB), `--data-dir PATH`, `--help`.
+`--farm --mock-devices 100` (simulated devices, no ADB; they stream synthetic frames when Auto Mirror
+is on, at 3 fps / 180 px above 100 devices), `--data-dir PATH`, `--help`.
 No arguments = the original upstream single-device UI.
 
 Data lives in `%APPDATA%\ADBDeviceFarm` (`settings.ini`, `farm.db`, `logs\`,
@@ -78,7 +79,9 @@ Data lives in `%APPDATA%\ADBDeviceFarm` (`settings.ini`, `farm.db`, `logs\`,
 - **Mirror start**: queue (max concurrent starts) → optional `wm size/density` normalisation → unique
   `{scid, localPort}` lease → `IDeviceManage::connectDevice` → watchdog → `Mirroring`.
 - **Rendering**: `DeviceTile::onFrame` uploads only Visible/Focused tiles every frame; Offscreen at
-  `perf/offscreenFps`; Hidden never; `replayLastFrame` when scrolled back. Decoding never stops.
+  `perf/offscreenFps` and only if the tile already owns a GL surface (a tile allocates its
+  `QYUVOpenGLWidget` on its first frame *in the viewport*, never off-screen); Hidden never;
+  `replayLastFrame` when scrolled back. Decoding never stops.
 - **Automation**: `WorkflowEngine::start(workflow, targets, concurrency)` → `AutomationRun` → one worker per
   device on the `automation` lane (`AdbExecutor::runSync`), retries/timeouts per node, error screenshot,
   logs to DB + `automation-runs/<run>/logs.json`. Nodes are dispatched in `executeNode()`.
