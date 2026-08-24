@@ -1,0 +1,5 @@
+﻿{"label":"baseline-4","devices":4,"seconds":20,"cpu_avg":0.8,"cpu_max":1.5,"ws_mb_avg":130.5,"ws_mb_max":132.7,"priv_mb_avg":120.7,"threads_avg":19,"handles_avg":825,"adb_processes":5,"cores":4,"timestamp":"2026-08-24T08:47:59"}
+{"label":"baseline-1-load","devices":1,"seconds":30,"cpu_avg":3.7,"cpu_max":4.9,"ws_mb_avg":89,"ws_mb_max":89.2,"priv_mb_avg":82.1,"threads_avg":16,"handles_avg":724,"adb_processes":3,"cores":4,"timestamp":"2026-08-24T08:50:02"}
+{"label":"baseline-5-load","devices":5,"seconds":30,"cpu_avg":8.6,"cpu_max":10.9,"ws_mb_avg":126.1,"ws_mb_max":126.9,"priv_mb_avg":129.1,"threads_avg":20,"handles_avg":854,"adb_processes":11,"cores":4,"timestamp":"2026-08-24T08:51:19"}
+{"label":"baseline-10-load","devices":10,"seconds":30,"cpu_avg":14.1,"cpu_max":17.1,"ws_mb_avg":161.1,"ws_mb_max":162.1,"priv_mb_avg":174.5,"threads_avg":23,"handles_avg":981,"adb_processes":19,"cores":4,"timestamp":"2026-08-24T08:53:00"}
+{"label":"baseline-20-load","devices":20,"seconds":30,"cpu_avg":9.8,"cpu_max":12.4,"ws_mb_avg":135.5,"ws_mb_max":138.5,"priv_mb_avg":141.8,"threads_avg":19,"handles_avg":884,"adb_processes":14,"cores":4,"timestamp":"2026-08-24T08:55:03"}
