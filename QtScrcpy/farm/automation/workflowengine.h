@@ -72,6 +72,11 @@ public:
     QList<JobLogRow> logs() const;
     QStringList failedIds() const;
 
+    /// A device worker may still hold a pointer to this run; deletion waits for it.
+    bool hasActiveWorkers() const { return m_activeWorkers.load() > 0; }
+    /// Cancel and delete once the last worker has reported back (GUI thread).
+    void deleteWhenIdle();
+
     // ---- engine-internal (worker threads) ----
     bool isCancelled() const { return m_token.isCancelled(); }
     bool isStopRequested() const { return m_stopRequested.load(); }
@@ -116,6 +121,8 @@ private:
     CancellationToken m_token;
     std::atomic<bool> m_paused{false};
     std::atomic<bool> m_stopRequested{false};
+    std::atomic<int> m_activeWorkers{0};
+    bool m_deleteRequested = false;
 };
 
 /**
@@ -135,6 +142,8 @@ public:
     AutomationRun *run(const QString &id) const;
     void remove(AutomationRun *run);
     void clearFinished();
+    /// Stop every active run (app exit) so automation-lane workers wind down quickly.
+    void shutdown();
     int activeCount() const { return static_cast<int>(activeRuns().size()); }
 
     /// targetsMode: selection | group | all | online | devices

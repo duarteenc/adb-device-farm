@@ -145,6 +145,46 @@ private slots:
         QVERIFY(RunRepository::loadLogs(run->id()).size() >= 9);
     }
 
+    void engineLoopEdgeCases()
+    {
+        // A loop whose `body` is not wired leaves through `done`; an inner loop whose
+        // `done` is not wired returns to the enclosing loop instead of ending the run.
+        Workflow w;
+        w.id = QStringLiteral("wf-loops");
+        w.name = QStringLiteral("Loops");
+        const QString start = w.addNode(QStringLiteral("flow.start"), QPointF());
+        const QString emptyLoop = w.addNode(QStringLiteral("logic.loop"), QPointF(), { { QStringLiteral("count"), 3 } });
+        const QString outer = w.addNode(QStringLiteral("logic.loop"), QPointF(), { { QStringLiteral("count"), 2 }, { QStringLiteral("indexVariable"), QStringLiteral("o") } });
+        const QString inner = w.addNode(QStringLiteral("logic.loop"), QPointF(), { { QStringLiteral("count"), 2 }, { QStringLiteral("indexVariable"), QStringLiteral("n") } });
+        const QString body = w.addNode(QStringLiteral("log.message"), QPointF(), { { QStringLiteral("message"), QStringLiteral("inner ${o}-${n}") } });
+        const QString after = w.addNode(QStringLiteral("log.message"), QPointF(), { { QStringLiteral("message"), QStringLiteral("after loops") } });
+        const QString end = w.addNode(QStringLiteral("flow.end"), QPointF());
+        w.connectNodes(start, QStringLiteral("out"), emptyLoop);
+        // emptyLoop.body deliberately unconnected
+        w.connectNodes(emptyLoop, QStringLiteral("done"), outer);
+        w.connectNodes(outer, QStringLiteral("body"), inner);
+        w.connectNodes(inner, QStringLiteral("body"), body);
+        // body has no outgoing edge -> back to inner; inner.done deliberately unconnected -> back to outer
+        w.connectNodes(outer, QStringLiteral("done"), after);
+        w.connectNodes(after, QStringLiteral("out"), end);
+        QVERIFY(WorkflowValidator::isValid(w));
+
+        AutomationRun *run = WorkflowEngine::instance().start(w, { QStringLiteral("dev-x") }, 1, QStringLiteral("test"));
+        QSignalSpy finished(run, &AutomationRun::finished);
+        QVERIFY(finished.wait(15000));
+        QCOMPARE(run->status(), AutomationRun::Completed);
+        QCOMPARE(run->succeeded(), 1);
+        QStringList messages;
+        for (const JobLogRow &l : run->logs()) {
+            messages << l.message;
+        }
+        QVERIFY(messages.contains(QStringLiteral("after loops")));
+        for (const char *m : { "inner 0-0", "inner 0-1", "inner 1-0", "inner 1-1" }) {
+            QVERIFY2(messages.contains(QLatin1String(m)), m);
+        }
+        QVERIFY(!messages.contains(QStringLiteral("inner 2-0")));
+    }
+
     void engineFailureIsolation()
     {
         // One device fails (flow.fail), the other completes; the run reports both.

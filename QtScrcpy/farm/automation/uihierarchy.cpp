@@ -166,8 +166,11 @@ QList<UiNode> UiHierarchy::find(const QList<UiNode> &nodes, const UiSelector &se
             out.append(n);
         }
     }
-    if (selector.instance > 0 && selector.instance < out.size()) {
-        return QList<UiNode>{ out.at(selector.instance) };
+    if (selector.instance > 0) {
+        if (selector.instance < out.size()) {
+            return QList<UiNode>{ out.at(selector.instance) };
+        }
+        return QList<UiNode>();    // the requested instance does not exist
     }
     return out;
 }

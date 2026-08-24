@@ -1,6 +1,7 @@
 #include "workflowengine.h"
 
 #include <algorithm>
+#include <memory>
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -12,6 +13,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRandomGenerator>
+#include <QSemaphore>
 #include <QThread>
 #include <QUuid>
 
@@ -51,6 +53,12 @@ struct LoopFrame
     QString nodeId;
     int iteration = 0;
     int limit = 0;
+};
+
+struct MirrorTypeState
+{
+    QSemaphore done;
+    bool typed = false;
 };
 
 class DeviceRunContext
@@ -128,7 +136,7 @@ public:
     {
         if ((x <= 1.0 && y <= 1.0) || screen.isEmpty()) {
             if (screen.isEmpty()) {
-                const DeviceRecord rec = DeviceRegistry::instance().get(deviceId);
+                const DeviceRecord rec = DeviceRegistry::instance().snapshot(deviceId);
                 if (!rec.screenSize.isEmpty()) {
                     screen = rec.screenSize;
                 } else {
@@ -310,15 +318,27 @@ NodeResult execInput(DeviceRunContext &ctx, const WorkflowNode &n)
         if (ctx.flag(n, QStringLiteral("clearFirst"))) {
             ctx.shell(QStringLiteral("input keyevent KEYCODE_MOVE_END; input keyevent --longpress $(printf 'KEYCODE_DEL %.0s' $(seq 1 60))"), 15000);
         }
-        auto dev = DeviceService::instance().device(ctx.deviceId);
-        if (dev && DeviceService::instance().isMirroring(ctx.deviceId)) {
-            QString copy = text;
-            QMetaObject::invokeMethod(&DeviceService::instance(), [dev, copy]() mutable {
-                if (dev) {
-                    dev->postTextInput(copy);
+        {
+            // The scrcpy core is GUI-thread only: look the session up and type there,
+            // waiting with a timeout so a closing app can never wedge this worker.
+            auto state = std::make_shared<MirrorTypeState>();
+            const QString deviceId = ctx.deviceId;
+            QString copy = text;    // non-const: the captured copy is handed to postTextInput(QString &)
+            QMetaObject::invokeMethod(&DeviceService::instance(), [state, deviceId, copy]() mutable {
+                auto dev = DeviceService::instance().device(deviceId);
+                if (dev && DeviceService::instance().isMirroring(deviceId)) {
+                    dev->postTextInput(copy);    // core API takes a non-const reference
+                    state->typed = true;
                 }
-            }, Qt::BlockingQueuedConnection);
-            return okPort(QStringLiteral("out"), QStringLiteral("typed via mirror"));
+                state->done.release(1);
+            }, Qt::QueuedConnection);
+            bool answered = false;
+            for (int i = 0; i < 50 && !answered && !ctx.cancelled(); ++i) {    // <= 5 s
+                answered = state->done.tryAcquire(1, 100);
+            }
+            if (answered && state->typed) {
+                return okPort(QStringLiteral("out"), QStringLiteral("typed via mirror"));
+            }
         }
         bool ascii = true;
         for (const QChar ch : text) {
@@ -334,6 +354,9 @@ NodeResult execInput(DeviceRunContext &ctx, const WorkflowNode &n)
     }
     if (t == QLatin1String("input.key") || t == QLatin1String("input.back") || t == QLatin1String("input.home") || t == QLatin1String("input.recent")) {
         QString key = t == QLatin1String("input.back") ? QStringLiteral("KEYCODE_BACK") : t == QLatin1String("input.home") ? QStringLiteral("KEYCODE_HOME") : t == QLatin1String("input.recent") ? QStringLiteral("KEYCODE_APP_SWITCH") : ctx.str(n, QStringLiteral("key"));
+        if (key.isEmpty()) {
+            return fail(QStringLiteral("key is empty"));
+        }
         if (!key.startsWith(QLatin1String("KEYCODE_")) && !key.at(0).isDigit()) {
             key = QStringLiteral("KEYCODE_") + key.toUpper();
         }
@@ -611,7 +634,7 @@ NodeResult executeNode(DeviceRunContext &ctx, const WorkflowNode &n, AutomationR
     }
     // ---- device ----
     if (t == QLatin1String("device.property")) {
-        const DeviceRecord rec = DeviceRegistry::instance().get(ctx.deviceId);
+        const DeviceRecord rec = DeviceRegistry::instance().snapshot(ctx.deviceId);
         const QString prop = ctx.str(n, QStringLiteral("property"));
         QVariant v;
         if (prop == QLatin1String("id")) {
@@ -666,7 +689,7 @@ NodeResult executeNode(DeviceRunContext &ctx, const WorkflowNode &n, AutomationR
         QElapsedTimer timer;
         timer.start();
         while (timer.elapsed() < ms && !ctx.cancelled()) {
-            QThread::msleep(static_cast<unsigned long>(std::min<qint64>(qint64(100), qint64(ms) - timer.elapsed())));
+            QThread::msleep(static_cast<unsigned long>(std::max<qint64>(1, std::min<qint64>(100, qint64(ms) - timer.elapsed()))));
             ctx.waitWhilePaused();
         }
         return okPort(QStringLiteral("out"), QStringLiteral("%1 ms").arg(ms));
@@ -770,6 +793,16 @@ NodeResult executeNode(DeviceRunContext &ctx, const WorkflowNode &n, AutomationR
 
 bool executeWorkflow(DeviceRunContext &ctx, const Workflow &wf, AutomationRun *run, QString &errorOut);
 
+
+// Sleeps in 100 ms slices so Stop/Cancel never waits for a long retry delay.
+void sleepCancellable(DeviceRunContext &ctx, int ms)
+{
+    QElapsedTimer t;
+    t.start();
+    while (t.elapsed() < ms && !ctx.cancelled()) {
+        QThread::msleep(static_cast<unsigned long>(std::max<qint64>(1, std::min<qint64>(100, qint64(ms) - t.elapsed()))));
+    }
+}
 bool executeWorkflow(DeviceRunContext &ctx, const Workflow &wf, AutomationRun *run, QString &errorOut)
 {
     QString current = wf.startNodeId();
@@ -797,6 +830,12 @@ bool executeWorkflow(DeviceRunContext &ctx, const Workflow &wf, AutomationRun *r
 
         if (node.disabled) {
             current = wf.nextNode(node.id, QStringLiteral("out"));
+            if (current.isEmpty() && !spec.outputs.isEmpty()) {
+                current = wf.nextNode(node.id, spec.outputs.first());    // branching nodes have no `out`
+            }
+            if (current.isEmpty() && !ctx.loops.isEmpty()) {
+                current = ctx.loops.last().nodeId;    // last node of a loop body
+            }
             continue;
         }
 
@@ -827,12 +866,16 @@ bool executeWorkflow(DeviceRunContext &ctx, const Workflow &wf, AutomationRun *r
                 ctx.log(title, QStringLiteral("info"), QStringLiteral("iteration %1").arg(frame->iteration), QString(), 0);
                 current = wf.nextNode(node.id, QStringLiteral("body"));
                 if (current.isEmpty()) {
-                    // empty body: keep looping until done
-                    continue;
+                    // nothing wired to `body`: there is nothing to repeat, leave through `done`
+                    ctx.loops.removeLast();
+                    current = wf.nextNode(node.id, QStringLiteral("done"));
                 }
             } else {
                 ctx.loops.removeLast();
                 current = wf.nextNode(node.id, QStringLiteral("done"));
+            }
+            if (current.isEmpty() && !ctx.loops.isEmpty()) {
+                current = ctx.loops.last().nodeId;    // `done` unconnected inside an outer loop
             }
             continue;
         }
@@ -845,6 +888,9 @@ bool executeWorkflow(DeviceRunContext &ctx, const Workflow &wf, AutomationRun *r
             if (node.type == QLatin1String("logic.break")) {
                 ctx.loops.removeLast();
                 current = wf.nextNode(frame.nodeId, QStringLiteral("done"));
+                if (current.isEmpty() && !ctx.loops.isEmpty()) {
+                    current = ctx.loops.last().nodeId;
+                }
             } else {
                 current = frame.nodeId;
             }
@@ -864,6 +910,12 @@ bool executeWorkflow(DeviceRunContext &ctx, const Workflow &wf, AutomationRun *r
             ++ctx.depth;
             QList<LoopFrame> savedLoops = ctx.loops;
             ctx.loops.clear();
+            // The sub-workflow's declared defaults apply unless the caller already set them.
+            for (auto it = sub.variables.cbegin(); it != sub.variables.cend(); ++it) {
+                if (!ctx.vars.contains(it.key())) {
+                    ctx.vars.insert(it.key(), it.value());
+                }
+            }
             const bool ok = executeWorkflow(ctx, sub, run, errorOut);
             ctx.loops = savedLoops;
             --ctx.depth;
@@ -871,6 +923,9 @@ bool executeWorkflow(DeviceRunContext &ctx, const Workflow &wf, AutomationRun *r
                 return false;
             }
             current = wf.nextNode(node.id, QStringLiteral("out"));
+            if (current.isEmpty() && !ctx.loops.isEmpty()) {
+                current = ctx.loops.last().nodeId;
+            }
             continue;
         }
 
@@ -886,7 +941,7 @@ bool executeWorkflow(DeviceRunContext &ctx, const Workflow &wf, AutomationRun *r
                 break;
             }
             ctx.log(title, QStringLiteral("info"), QStringLiteral("retry %1/%2 after %3 ms: %4").arg(attempt).arg(node.retryCount).arg(node.retryDelayMs).arg(result.error), QString(), timer.elapsed());
-            QThread::msleep(static_cast<unsigned long>(std::max(0, node.retryDelayMs)));
+            sleepCancellable(ctx, node.retryDelayMs);
         }
         const qint64 ms = timer.elapsed();
         if (result.ok) {
@@ -905,6 +960,9 @@ bool executeWorkflow(DeviceRunContext &ctx, const Workflow &wf, AutomationRun *r
                 current = wf.nextNode(node.id, QStringLiteral("out"));
                 if (current.isEmpty() && !spec.outputs.isEmpty()) {
                     current = wf.nextNode(node.id, spec.outputs.first());
+                }
+                if (current.isEmpty() && !ctx.loops.isEmpty()) {
+                    current = ctx.loops.last().nodeId;    // last node of a loop body
                 }
                 continue;
             }
@@ -1205,6 +1263,9 @@ void AutomationRun::cancel()
 
 void AutomationRun::retryFailed()
 {
+    if (running() > 0) {
+        return;    // workers of the stopped run are still finishing their current step
+    }
     bool any = false;
     {
         QMutexLocker lock(&m_mutex);
@@ -1266,7 +1327,8 @@ void AutomationRun::pump()
         const Workflow wf = m_workflow;
         const QString runDir = m_runDir;
         QPointer<AutomationRun> self(this);
-        TaskExecutor::instance().run(QStringLiteral("automation"), [self, wf, next, runDir]() {
+        m_activeWorkers.fetch_add(1);
+        const bool queuedOk = TaskExecutor::instance().run(QStringLiteral("automation"), [self, wf, next, runDir]() {
             if (!self) {
                 return;
             }
@@ -1275,7 +1337,7 @@ void AutomationRun::pump()
             ctx.deviceId = next;
             ctx.vars = wf.variables;
             ctx.deviceDir = runDir + QLatin1Char('/') + DeviceCommands::fileSafeId(next);
-            DeviceRecord rec = DeviceRegistry::instance().get(next);
+            DeviceRecord rec = DeviceRegistry::instance().snapshot(next);
             if (rec.id.isEmpty()) {
                 rec.id = next;    // unknown to the registry (tests, ad-hoc ids)
             }
@@ -1305,6 +1367,13 @@ void AutomationRun::pump()
                 self->reportDeviceFinished(next, ok, error, shot);
             }
         });
+        if (!queuedOk) {
+            // Executor is shutting down: nothing will ever report back for this device.
+            m_activeWorkers.fetch_sub(1);
+            QMutexLocker lock(&m_mutex);
+            m_progress[next].status = QStringLiteral("cancelled");
+            m_progress[next].error = QStringLiteral("executor unavailable");
+        }
     }
     if (running() == 0 && queued() == 0) {
         setStatus(failed() == 0 ? Completed : (succeeded() == 0 ? Failed : Completed));
@@ -1351,9 +1420,26 @@ void AutomationRun::reportDeviceFinished(const QString &deviceId, bool ok, const
         if (!ok) {
             FarmLog::instance().warning(QStringLiteral("automation"), QStringLiteral("'%1' failed: %2").arg(m_workflow.name, error), deviceId);
         }
+        const bool lastWorker = m_activeWorkers.fetch_sub(1) == 1;
+        if (m_deleteRequested) {
+            if (lastWorker) {
+                deleteLater();
+            }
+            return;
+        }
         emit deviceChanged(deviceId);
         pump();
     }, Qt::QueuedConnection);
+}
+
+void AutomationRun::deleteWhenIdle()
+{
+    m_deleteRequested = true;
+    m_token.cancel();
+    if (m_activeWorkers.load() == 0) {
+        deleteLater();
+    }
+    // otherwise the last reportDeviceFinished() deletes the run
 }
 
 // =====================================================================
@@ -1384,7 +1470,7 @@ AutomationRun *WorkflowEngine::start(const Workflow &workflow, const QStringList
         }
         m_runs.removeLast();
         emit runRemoved(old->id());
-        old->deleteLater();
+        old->deleteWhenIdle();
     }
     emit runAdded(run);
     emit runsChanged();
@@ -1419,8 +1505,17 @@ void WorkflowEngine::remove(AutomationRun *run)
         return;
     }
     emit runRemoved(run->id());
-    run->deleteLater();
+    run->deleteWhenIdle();
     emit runsChanged();
+}
+
+void WorkflowEngine::shutdown()
+{
+    for (AutomationRun *r : std::as_const(m_runs)) {
+        if (r->status() == AutomationRun::Running || r->status() == AutomationRun::Paused || r->status() == AutomationRun::Pending) {
+            r->stop();
+        }
+    }
 }
 
 void WorkflowEngine::clearFinished()

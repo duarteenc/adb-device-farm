@@ -50,6 +50,15 @@ Every node has **retries, retry delay, timeout and on-failure** (fail the
 device with an error screenshot / continue / stop) — Automation Studio ›
 property panel › *Failure handling*.
 
+Loop wiring rules (`logic.loop` / `logic.while`): the last node of a `body`
+chain returns to the loop automatically (no edge needed); a loop whose `body`
+port is not wired leaves through `done` at once; an inner loop whose `done` is
+not wired returns to the enclosing loop; a disabled node or an *on failure =
+continue* node at the end of a body also returns to the loop. `flow.runWorkflow`
+seeds the sub-workflow's declared variable defaults unless the caller already
+set them. `instance=N` in a UI selector matches nothing when fewer than N+1
+elements match (it never falls back to the first one).
+
 ### Expressions
 
 `${var}`, `${match.x}`, `${device.model}`, `${list.length}` substitute anywhere.

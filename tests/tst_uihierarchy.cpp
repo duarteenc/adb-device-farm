@@ -40,6 +40,7 @@ private slots:
         QCOMPARE(UiHierarchy::find(nodes, UiSelector::parse(QStringLiteral("class=Button"))).size(), 2);
         QCOMPARE(UiHierarchy::find(nodes, UiSelector::parse(QStringLiteral("class=Button; clickable=true; instance=1"))).first().text, QStringLiteral("Cancel"));
         QCOMPARE(UiHierarchy::find(nodes, UiSelector::parse(QStringLiteral("Cancel"))).size(), 1);    // bare value = text
+        QVERIFY(UiHierarchy::find(nodes, UiSelector::parse(QStringLiteral("class=Button; instance=5"))).isEmpty());    // instance out of range
         QVERIFY(UiHierarchy::find(nodes, UiSelector::parse(QStringLiteral("text=Nope"))).isEmpty());
         QRect r;
         QVERIFY(UiHierarchy::parseBounds(QStringLiteral("[10,20][30,60]"), r));
