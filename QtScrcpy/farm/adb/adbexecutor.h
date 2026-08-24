@@ -115,6 +115,7 @@ private:
         AdbCallback callback;
         CancellationToken token;
         bool hasToken = false;
+        bool hadContext = false;    // a receiver was given: never call the callback if it died
     };
     struct Running
     {
@@ -123,6 +124,9 @@ private:
         qint64 startedMs = 0;
     };
 
+    QUuid enqueue(Pending pending);
+    void kickPump();
+    void releaseSlot();                   // returns a permit, honouring a pending cap reduction
     void pump();                          // executor thread: start queued processes up to the cap
     void launch(const Pending &pending);  // executor thread
     void finish(const QUuid &id, AdbResult result);
@@ -140,6 +144,8 @@ private:
     QSemaphore m_slots;                   // shared cap for sync + async
     Metrics m_metrics;
     std::atomic<bool> m_started{false};
+    std::atomic<bool> m_stopping{false};
+    int m_pendingShrink = 0;              // permits still to be retired after setMaxConcurrency() lowered the cap
 };
 
 } // namespace farm

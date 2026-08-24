@@ -77,10 +77,22 @@ void AdbExecutor::setMaxConcurrency(int n)
         return;
     }
     if (n > m_maxConcurrency) {
-        m_slots.release(n - m_maxConcurrency);
+        int grow = n - m_maxConcurrency;
+        // Undo a shrink that is still pending before handing out new permits.
+        const int fromPending = std::min(grow, m_pendingShrink);
+        m_pendingShrink -= fromPending;
+        grow -= fromPending;
+        if (grow > 0) {
+            m_slots.release(grow);
+        }
     } else {
-        // Shrinking: take the difference back lazily (may block briefly if all busy).
-        m_slots.tryAcquire(m_maxConcurrency - n, 0);
+        // Shrinking: take back what is free now; the rest is retired as running
+        // commands finish (releaseSlot), so the cap is always honoured eventually.
+        int shrink = m_maxConcurrency - n;
+        while (shrink > 0 && m_slots.tryAcquire(1, 0)) {
+            --shrink;
+        }
+        m_pendingShrink += shrink;
     }
     m_maxConcurrency = n;
     if (m_thread) {
@@ -106,10 +118,14 @@ void AdbExecutor::start()
 
 void AdbExecutor::stop()
 {
-    if (!m_started.exchange(false)) {
+    if (!m_started.load()) {
         return;
     }
+    // Callbacks delivered by cancelAll() may enqueue follow-up commands; while
+    // stopping they are answered with `cancelled` instead of restarting the thread.
+    m_stopping = true;
     cancelAll();
+    m_started = false;
     if (m_thread) {
         QMetaObject::invokeMethod(m_worker, [this]() { m_worker->deleteLater(); }, Qt::BlockingQueuedConnection);
         m_thread->quit();
@@ -118,6 +134,7 @@ void AdbExecutor::stop()
         m_thread = nullptr;
         m_worker = nullptr;
     }
+    m_stopping = false;
 }
 
 QStringList AdbExecutor::buildArguments(const AdbCommand &command) const
@@ -136,17 +153,9 @@ QUuid AdbExecutor::run(const AdbCommand &command, QObject *context, AdbCallback 
     p.id = QUuid::createUuid();
     p.command = command;
     p.context = context;
+    p.hadContext = context != nullptr;
     p.callback = std::move(callback);
-    {
-        QMutexLocker lock(&m_mutex);
-        m_queue.enqueue(p);
-        m_metrics.queued = static_cast<int>(m_queue.size());
-    }
-    if (!m_started) {
-        start();
-    }
-    QMetaObject::invokeMethod(m_worker, [this]() { pump(); }, Qt::QueuedConnection);
-    return p.id;
+    return enqueue(std::move(p));
 }
 
 QUuid AdbExecutor::run(const AdbCommand &command, QObject *context, AdbCallback callback, CancellationToken token)
@@ -155,9 +164,22 @@ QUuid AdbExecutor::run(const AdbCommand &command, QObject *context, AdbCallback 
     p.id = QUuid::createUuid();
     p.command = command;
     p.context = context;
+    p.hadContext = context != nullptr;
     p.callback = std::move(callback);
     p.token = token;
     p.hasToken = true;
+    return enqueue(std::move(p));
+}
+
+QUuid AdbExecutor::enqueue(Pending p)
+{
+    if (m_stopping.load()) {
+        AdbResult r;
+        r.cancelled = true;
+        r.error = QStringLiteral("adb executor is shutting down");
+        deliver(p, r);
+        return p.id;
+    }
     {
         QMutexLocker lock(&m_mutex);
         m_queue.enqueue(p);
@@ -166,8 +188,27 @@ QUuid AdbExecutor::run(const AdbCommand &command, QObject *context, AdbCallback 
     if (!m_started) {
         start();
     }
-    QMetaObject::invokeMethod(m_worker, [this]() { pump(); }, Qt::QueuedConnection);
+    kickPump();
     return p.id;
+}
+
+void AdbExecutor::kickPump()
+{
+    if (QObject *worker = m_worker) {
+        QMetaObject::invokeMethod(worker, [this]() { pump(); }, Qt::QueuedConnection);
+    }
+}
+
+void AdbExecutor::releaseSlot()
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        if (m_pendingShrink > 0) {
+            --m_pendingShrink;    // permit retired: the cap was lowered while this command ran
+            return;
+        }
+    }
+    m_slots.release(1);
 }
 
 void AdbExecutor::pump()
@@ -191,7 +232,7 @@ void AdbExecutor::pump()
             AdbResult r;
             r.cancelled = true;
             r.error = QStringLiteral("cancelled");
-            m_slots.release(1);
+            releaseSlot();
             deliver(next, r);
             continue;
         }
@@ -244,9 +285,13 @@ void AdbExecutor::launch(const Pending &pending)
         if (error != QProcess::FailedToStart) {
             return;    // Crashed/Timedout are reported through finished()/watchdog
         }
-        AdbResult result;
-        result.error = QStringLiteral("adb failed to start (%1)").arg(adbPath());
-        finish(id, result);
+        // QProcess emits FailedToStart synchronously from start(); finish() pumps the
+        // next command, so defer to the event loop to keep launch() non-reentrant.
+        QTimer::singleShot(0, m_worker, [this, id]() {
+            AdbResult result;
+            result.error = QStringLiteral("adb failed to start (%1)").arg(adbPath());
+            finish(id, result);
+        });
     });
 
     // Watchdog: hard timeout. adb itself can hang on a wedged transport.
@@ -293,7 +338,7 @@ void AdbExecutor::launch(const Pending &pending)
     }
 
     process->start();
-    if (!pending.command.stdinData.isEmpty()) {
+    if (!pending.command.stdinData.isEmpty() && process->state() != QProcess::NotRunning) {
         process->write(pending.command.stdinData);
         process->closeWriteChannel();
     }
@@ -316,7 +361,7 @@ void AdbExecutor::finish(const QUuid &id, AdbResult result)
     r->process->deleteLater();
     const Pending pending = r->pending;
     delete r;
-    m_slots.release(1);
+    releaseSlot();
     emit commandFinished(pending.command.serial, pending.command.label, result.ok, result.durationMs);
     deliver(pending, result);
     pump();
@@ -327,13 +372,17 @@ void AdbExecutor::deliver(const Pending &pending, const AdbResult &result)
     if (!pending.callback) {
         return;
     }
-    if (pending.context) {
+    if (pending.hadContext) {
         QObject *ctx = pending.context.data();
+        if (!ctx) {
+            return;    // the receiver (dialog, page) was destroyed: its lambda captured a dead `this`
+        }
         AdbCallback cb = pending.callback;
         QMetaObject::invokeMethod(ctx, [cb, result]() { cb(result); }, Qt::QueuedConnection);
-    } else {
-        pending.callback(result);
+        return;
     }
+    // No receiver was given (batch jobs marshal their own results): run inline.
+    pending.callback(result);
 }
 
 void AdbExecutor::record(const AdbResult &result)
@@ -368,7 +417,8 @@ AdbResult AdbExecutor::runSync(const AdbCommand &command, CancellationToken toke
     process.start();
     if (!process.waitForStarted(5000)) {
         result.error = QStringLiteral("adb failed to start (%1)").arg(adbPath());
-        m_slots.release(1);
+        releaseSlot();
+        kickPump();
         result.durationMs = timer.elapsed();
         record(result);
         return result;
@@ -412,7 +462,8 @@ AdbResult AdbExecutor::runSync(const AdbCommand &command, CancellationToken toke
         }
     }
     result.durationMs = timer.elapsed();
-    m_slots.release(1);
+    releaseSlot();
+    kickPump();    // queued async commands may have been waiting for this permit
     record(result);
     emit commandFinished(command.serial, command.label, result.ok, result.durationMs);
     return result;
