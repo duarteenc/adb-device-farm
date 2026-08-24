@@ -138,8 +138,8 @@ void DeviceDiscoveryService::quickRefresh()
                 if (s.type.startsWith(QLatin1String("_adb._tcp")) && ipv4::isTcpEndpoint(s.address)) {
                     DeviceRegistry::instance().markDiscovered(ipv4::hostOf(s.address), ipv4::portOf(s.address));
                     DeviceRegistry::instance().update(s.address, [](DeviceRecord &d) { d.connectionType = ConnectionType::Mdns; });
-                    if (FarmSettings::instance().autoConnect()) {
-                        enqueueConnect(s.address, false);
+                    if (FarmSettings::instance().autoConnect() && !m_onlineIds.contains(s.address)) {
+                        enqueueConnect(s.address, false);    // never re-connect a device that is already online/mirroring
                     }
                 }
             }
@@ -236,6 +236,8 @@ void DeviceDiscoveryService::fullScan()
 
     m_scanToken = CancellationToken();
     m_scanning = true;
+    m_manualScan = false;
+    m_scanPort = options.port;
     m_scanNewlyConnected = 0;
     m_scanDone = 0;
     m_scanTotal = static_cast<int>(range.count());
@@ -255,9 +257,13 @@ void DeviceDiscoveryService::cancelScan()
 
 void DeviceDiscoveryService::onScannerHost(const QString &host)
 {
-    const int port = FarmSettings::instance().adbPort();
-    const QString id = DeviceRegistry::instance().markDiscovered(host, port);
-    if (!m_onlineIds.contains(id) && FarmSettings::instance().autoConnect()) {
+    const QString id = DeviceRegistry::instance().markDiscovered(host, m_scanPort);
+    if (m_onlineIds.contains(id)) {
+        return;
+    }
+    if (m_manualScan) {
+        enqueueConnect(id, true);    // manual sweeps connect everything that answers
+    } else if (FarmSettings::instance().autoConnect()) {
         enqueueConnect(id, false);
     }
 }
@@ -275,7 +281,7 @@ void DeviceDiscoveryService::onScannerFinished(const QStringList &found, qint64 
     // right now, which proves it is reachable).
     DeviceRegistry &registry = DeviceRegistry::instance();
     const QSet<QString> foundSet(found.begin(), found.end());
-    if (!cancelled) {
+    if (!cancelled && !m_manualScan) {    // a manual sweep only probes its own range
         const QList<DeviceRecord> all = registry.all();
         for (const DeviceRecord &d : all) {
             if (d.isTcp() && !foundSet.contains(d.host()) && !m_onlineIds.contains(d.id)
@@ -303,6 +309,8 @@ void DeviceDiscoveryService::onScannerFinished(const QStringList &found, qint64 
     if (m_connectQueue.isEmpty() && m_connecting.isEmpty()) {
         emit scanFinished(m_lastScanFound, m_scanNewlyConnected, ms);
         emit statusMessage(tr("Scan done: %1 hosts, %2 newly connected (%3 ms)").arg(m_lastScanFound).arg(m_scanNewlyConnected).arg(ms));
+    } else {
+        m_scanReportPending = true;
     }
 }
 
@@ -347,7 +355,9 @@ void DeviceDiscoveryService::pumpConnects()
                 }
                 // The actual state (device/unauthorized/offline) comes from the next
                 // `adb devices -l`; poll it right away rather than waiting for the timer.
-                registry.setState(endpoint, DeviceState::Connecting, tr("verifying"));
+                // (Discovered, not Connecting: Connecting is owned by DeviceService and
+                // upsertFromAdb would never promote it to AdbOnline.)
+                registry.setState(endpoint, DeviceState::Discovered, tr("verifying"));
                 quickRefresh();
                 ActivityLog::instance().info(ActivityEntry::Network, tr("Connected %1").arg(endpoint), endpoint);
             } else {
@@ -361,7 +371,8 @@ void DeviceDiscoveryService::pumpConnects()
             pumpConnects();
         }, m_connectTimeoutMs);
     }
-    if (!m_scanning && m_connectQueue.isEmpty() && m_connecting.isEmpty() && m_lastFullScan.isValid()) {
+    if (m_scanReportPending && !m_scanning && m_connectQueue.isEmpty() && m_connecting.isEmpty()) {
+        m_scanReportPending = false;
         emit scanFinished(m_lastScanFound, m_scanNewlyConnected, m_lastScanMs);
         emit statusMessage(tr("Scan done: %1 hosts, %2 newly connected (%3 ms)").arg(m_lastScanFound).arg(m_scanNewlyConnected).arg(m_lastScanMs));
     }
@@ -403,17 +414,12 @@ void DeviceDiscoveryService::connectRange(const QString &rangeText, quint16 port
     options.excludeHosts = localAddresses();
     m_scanToken = CancellationToken();
     m_scanning = true;
+    m_manualScan = true;    // onScannerHost connects everything that answers, on this port
+    m_scanPort = port;
     m_scanNewlyConnected = 0;
     m_scanTotal = static_cast<int>(range.count());
     emit scanStarted(m_scanTotal);
     emit statusMessage(tr("Scanning %1 hosts…").arg(m_scanTotal));
-    // Manual sweeps connect everything that answers, regardless of the auto-connect setting.
-    QObject *guard = new QObject(this);
-    connect(m_scanner, &NetworkScanner::hostFound, guard, [port](const QString &host) {
-        const QString id = DeviceRegistry::instance().markDiscovered(host, port);
-        DeviceDiscoveryService::instance().enqueueConnect(id, true);
-    });
-    connect(m_scanner, &NetworkScanner::finished, guard, [guard]() { guard->deleteLater(); });
     m_scanner->start(options, m_scanToken);
 }
 

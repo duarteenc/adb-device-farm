@@ -21,6 +21,7 @@ public:
 
     void begin(const Options &options, CancellationToken token)
     {
+        m_active = true;
         m_token = token;
         m_found.clear();
         m_queue.clear();
@@ -56,6 +57,9 @@ public:
 
     void cancelNow()
     {
+        if (!m_active) {
+            return;    // nothing running: a stale finished() would desync the owner
+        }
         m_cancelled = true;
         m_queue.clear();
         if (m_inFlight == 0) {
@@ -66,10 +70,18 @@ public:
 private:
     void pump()
     {
+        // connectToHost() can fail synchronously (no route to the subnet) and call
+        // complete() -> pump() from inside probe(): stay non-reentrant so a /24 with
+        // 254 immediate failures does not nest 254 frames and finish 254 times.
+        if (m_pumping || !m_active) {
+            return;
+        }
+        m_pumping = true;
         while (m_inFlight < m_concurrency && !m_queue.isEmpty() && !m_token.isCancelled()) {
             const QString host = m_queue.takeFirst();
             probe(host);
         }
+        m_pumping = false;
         if (m_token.isCancelled() && !m_cancelled) {
             m_cancelled = true;
             m_queue.clear();
@@ -115,6 +127,10 @@ private:
 
     void finish()
     {
+        if (!m_active) {
+            return;
+        }
+        m_active = false;
         const QStringList found = m_found;
         const qint64 ms = m_timer.elapsed();
         const bool cancelled = m_cancelled || m_token.isCancelled();
@@ -135,6 +151,8 @@ private:
     int m_timeoutMs = 800;
     quint16 m_port = 5555;
     bool m_cancelled = false;
+    bool m_active = false;
+    bool m_pumping = false;
 };
 
 NetworkScanner::NetworkScanner(QObject *parent)

@@ -84,6 +84,9 @@ private:
     CancellationToken m_scanToken;
     bool m_running = false;
     bool m_scanning = false;
+    bool m_manualScan = false;          // current sweep came from connectRange()
+    bool m_scanReportPending = false;   // scanner finished, connects still draining
+    quint16 m_scanPort = 5555;          // port probed by the current sweep
     bool m_quickInFlight = false;
     bool m_mdnsSupported = true;
     int m_scanDone = 0;

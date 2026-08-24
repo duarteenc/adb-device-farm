@@ -32,9 +32,11 @@ with the ⚠ badge ("approve USB debugging on the phone").
 ## State transitions driven by discovery
 
 - host answers on 5555 → `Discovered`
-- `adb connect` ok → `Connecting (verifying)` → next `adb devices` → `AdbOnline` / `Unauthorized`
+- `adb connect` ok → `Discovered (verifying)` → next `adb devices` → `AdbOnline` / `Unauthorized`
+  (`Connecting` is reserved for `DeviceService` mirror starts; discovery never parks a device there)
 - device drops out of `adb devices` → `Offline` (+ `deviceDisappeared` → `DeviceService` reconnect loop when the device was mirroring/wanted)
-- a known TCP device that did not answer the full sweep → `Offline`
+- a known TCP device that did not answer the **full** sweep → `Offline` (a manual range sweep only touches the hosts it probed)
+- devices that are already online/mirroring are never re-`adb connect`ed by mDNS or the sweep
 
 ## Manual actions
 
