@@ -261,6 +261,9 @@ void NodeItem::mousePressEvent(QGraphicsSceneMouseEvent *event)
         event->accept();
         return;
     }
+    if (event->button() == Qt::LeftButton) {
+        m_scene->noteDragStart();
+    }
     QGraphicsObject::mousePressEvent(event);
 }
 
@@ -332,11 +335,19 @@ void WorkflowScene::setWorkflow(const Workflow &workflow)
 
 void WorkflowScene::rebuild()
 {
-    clear();
-    m_nodes.clear();
-    m_edges.clear();
-    m_tempEdge = nullptr;
-    m_connectFrom = nullptr;
+    // clear() emits selectionChanged for every selected item it deletes; the handler
+    // walks m_edges/m_nodes, so those must be empty and signals blocked before the
+    // items go away. The selection is restored afterwards so the property panel keeps
+    // its node.
+    const QStringList selected = selectedNodeIds();
+    {
+        QSignalBlocker blocker(this);
+        m_nodes.clear();
+        m_edges.clear();
+        m_tempEdge = nullptr;
+        m_connectFrom = nullptr;
+        clear();
+    }
     for (const WorkflowNode &n : m_workflow.nodes) {
         auto *item = new NodeItem(n, this);
         addItem(item);
@@ -348,6 +359,24 @@ void WorkflowScene::rebuild()
             addItem(e);
             m_edges.append(e);
         }
+    }
+    QString restored;
+    {
+        QSignalBlocker blocker(this);
+        for (const QString &id : selected) {
+            if (NodeItem *it = m_nodes.value(id, nullptr)) {
+                it->setSelected(true);
+                if (restored.isEmpty()) {
+                    restored = id;
+                }
+            }
+        }
+    }
+    updateEdges();
+    if (!restored.isEmpty()) {
+        emit selectionNodeChanged(restored);    // refresh the property panel (undo may have changed values)
+    } else if (!selected.isEmpty()) {
+        emit selectionChanged();                // the selected node is gone
     }
     if (!m_activeNode.isEmpty()) {
         setActiveNode(m_activeNode);
@@ -458,12 +487,27 @@ void WorkflowScene::updateNode(const WorkflowNode &node)
     }
     pushUndo();
     *n = node;
-    if (NodeItem *item = m_nodes.value(node.id, nullptr)) {
+    NodeItem *item = m_nodes.value(node.id, nullptr);
+    if (item) {
         item->setNode(node);
     }
-    // switch cases may have changed the port list
-    if (node.type == QLatin1String("logic.switch")) {
-        rebuild();
+    if (node.type == QLatin1String("logic.switch") && item) {
+        // Cases changed: drop edges leaving through ports that no longer exist. This
+        // runs inside the property editor's own signal, so no scene rebuild here (it
+        // would delete the very editor that is emitting).
+        const QStringList ports = item->outputs();
+        QList<EdgeItem *> stale;
+        for (EdgeItem *e : std::as_const(m_edges)) {
+            if (e->connection().from == node.id && !ports.contains(e->connection().port)) {
+                stale << e;
+            }
+        }
+        for (EdgeItem *e : stale) {
+            m_edges.removeOne(e);
+            removeItem(e);
+            delete e;
+        }
+        m_workflow.connections.removeIf([&](const WorkflowConnection &c) { return c.from == node.id && !ports.contains(c.port); });
     }
     updateEdges();
     touched();
@@ -598,20 +642,41 @@ void WorkflowScene::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
         if (target && target->hasInput() && target->nodeId() != from) {
             connectNodes(from, port, target->nodeId());
         }
+        // The source node accepted the press and is still the scene's mouse grabber.
+        if (QGraphicsItem *grabber = mouseGrabberItem()) {
+            grabber->ungrabMouse();
+        }
         return;
     }
     QGraphicsScene::mouseReleaseEvent(event);
-    // A finished drag of nodes: record one undo step for the move.
-    bool moved = false;
-    for (const QString &id : selectedNodeIds()) {
-        if (NodeItem *it = m_nodes.value(id, nullptr)) {
-            if (it->pos() != m_workflow.node(id).pos) {
+    // A finished drag of nodes: one undo step (the pre-drag model) for the whole move.
+    if (!m_dragSnapshot.isEmpty()) {
+        bool moved = false;
+        for (auto it = m_nodes.cbegin(); it != m_nodes.cend(); ++it) {
+            if (m_dragStartPos.contains(it.key()) && m_dragStartPos.value(it.key()) != it.value()->pos()) {
                 moved = true;
+                break;
             }
         }
+        if (moved) {
+            m_undo.append(m_dragSnapshot);
+            while (m_undo.size() > 100) {
+                m_undo.removeFirst();
+            }
+            m_redo.clear();
+            touched();
+        }
+        m_dragSnapshot.clear();
+        m_dragStartPos.clear();
     }
-    if (moved) {
-        touched();
+}
+
+void WorkflowScene::noteDragStart()
+{
+    m_dragSnapshot = m_workflow.toJsonText();
+    m_dragStartPos.clear();
+    for (auto it = m_nodes.cbegin(); it != m_nodes.cend(); ++it) {
+        m_dragStartPos.insert(it.key(), it.value()->pos());
     }
 }
 
@@ -890,7 +955,7 @@ void WorkflowEditor::setWorkflow(const Workflow &workflow)
 void WorkflowEditor::validate()
 {
     m_issues->clear();
-    for (NodeItem *n : m_scene->findChildren<NodeItem *>()) {
+    for (NodeItem *n : m_scene->nodeItems()) {
         n->setIssue(QString());
     }
     const QList<ValidationIssue> issues = WorkflowValidator::validate(m_scene->workflow());

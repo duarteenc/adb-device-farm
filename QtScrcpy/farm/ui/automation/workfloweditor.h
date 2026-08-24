@@ -99,8 +99,10 @@ public:
     void markClean() { m_dirty = false; }
     bool isDirty() const { return m_dirty; }
     void beginConnection(NodeItem *from, const QString &port);
+    void noteDragStart();    // NodeItem: a plain press may start a move; remember the pre-drag model
     void setActiveNode(const QString &id);
     QStringList selectedNodeIds() const;
+    QList<NodeItem *> nodeItems() const { return m_nodes.values(); }
 
 signals:
     void modified();
@@ -126,6 +128,8 @@ private:
     QString m_connectPort;
     QGraphicsPathItem *m_tempEdge = nullptr;
     QString m_activeNode;
+    QString m_dragSnapshot;                 // model JSON before a node drag started
+    QHash<QString, QPointF> m_dragStartPos;
 };
 
 /** Zoom / pan view. */

@@ -621,26 +621,52 @@ void AutomationsPage::runCurrent()
 
 void AutomationsPage::reloadRuns()
 {
-    const QString prev = m_runs->currentItem() ? m_runs->currentItem()->data(Qt::UserRole).toString() : QString();
-    m_runs->blockSignals(true);
-    m_runs->clear();
-    int select = -1;
-    int row = 0;
-    for (AutomationRun *r : WorkflowEngine::instance().runs()) {
-        auto *item = new QListWidgetItem(QStringLiteral("%1  %2\n%3 · %4%").arg(r->startedAt().toString(QStringLiteral("HH:mm:ss")), r->name(), AutomationRun::statusName(r->status())).arg(r->percent()), m_runs);
-        item->setData(Qt::UserRole, r->id());
-        item->setForeground(r->status() == AutomationRun::Failed ? theme::danger() : r->status() == AutomationRun::Running ? theme::success() : theme::text());
-        if (r->id() == prev) {
-            select = row;
+    // runsChanged fires for every device step of every run: update the existing rows
+    // in place and only rebuild the list when the set of runs actually changed. The
+    // shown run refreshes itself through its own deviceChanged/statusChanged hooks.
+    const QList<AutomationRun *> runs = WorkflowEngine::instance().runs();
+    const auto label = [](AutomationRun *r) {
+        return QStringLiteral("%1  %2\n%3 · %4%").arg(r->startedAt().toString(QStringLiteral("HH:mm:ss")), r->name(), AutomationRun::statusName(r->status())).arg(r->percent());
+    };
+    const auto color = [](AutomationRun *r) {
+        return r->status() == AutomationRun::Failed ? theme::danger() : r->status() == AutomationRun::Running ? theme::success() : theme::text();
+    };
+    bool sameSet = runs.size() == m_runs->count();
+    for (int i = 0; sameSet && i < runs.size(); ++i) {
+        sameSet = m_runs->item(i)->data(Qt::UserRole).toString() == runs.at(i)->id();
+    }
+    if (sameSet) {
+        for (int i = 0; i < runs.size(); ++i) {
+            QListWidgetItem *item = m_runs->item(i);
+            const QString text = label(runs.at(i));
+            if (item->text() != text) {
+                item->setText(text);
+                item->setForeground(color(runs.at(i)));
+            }
         }
-        ++row;
+        return;
     }
-    m_runs->blockSignals(false);
-    if (select >= 0) {
-        m_runs->setCurrentRow(select);
+    const QString prev = m_runs->currentItem() ? m_runs->currentItem()->data(Qt::UserRole).toString() : QString();
+    {
+        QSignalBlocker blocker(m_runs);
+        m_runs->clear();
+        int select = -1;
+        int row = 0;
+        for (AutomationRun *r : runs) {
+            auto *item = new QListWidgetItem(label(r), m_runs);
+            item->setData(Qt::UserRole, r->id());
+            item->setForeground(color(r));
+            if (r->id() == prev) {
+                select = row;
+            }
+            ++row;
+        }
+        if (select >= 0) {
+            m_runs->setCurrentRow(select);    // same run stays shown: no showRun() re-entry
+        }
     }
-    if (m_shownRun) {
-        refreshRunDevices();
+    if (m_shownRun && !runs.contains(m_shownRun.data())) {
+        showRun(nullptr);    // the shown run was removed
     }
 }
 
