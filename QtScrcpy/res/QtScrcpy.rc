@@ -21,10 +21,10 @@ BEGIN
         BLOCK "080404b0"
         BEGIN
             VALUE "CompanyName", "RanKun"
-            VALUE "FileDescription", "Android real-time display control software"
+            VALUE "FileDescription", "ADB Device Farm - Android device management and automation"
             VALUE "FileVersion", VERSION_RC_STR
             VALUE "LegalCopyright", "Copyright (C) RanKun 2018-2038. All rights reserved."
-            VALUE "ProductName", "QtScrcpy"
+            VALUE "ProductName", "ADB Device Farm"
             VALUE "ProductVersion", VERSION_RC_STR
         END
     END

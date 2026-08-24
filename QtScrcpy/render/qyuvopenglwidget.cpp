@@ -131,12 +131,18 @@ const QSize &QYUVOpenGLWidget::frameSize()
 
 void QYUVOpenGLWidget::updateTextures(quint8 *dataY, quint8 *dataU, quint8 *dataV, quint32 linesizeY, quint32 linesizeU, quint32 linesizeV)
 {
-    if (m_textureInited) {
-        updateTexture(m_texture[0], 0, dataY, linesizeY);
-        updateTexture(m_texture[1], 1, dataU, linesizeU);
-        updateTexture(m_texture[2], 2, dataV, linesizeV);
-        update();
+    if (!m_textureInited || !dataY || !dataU || !dataV) {
+        return;
     }
+    // Farm: ONE context switch per frame (upstream did makeCurrent/doneCurrent
+    // per plane = three per frame, which dominated the GUI-thread cost with many tiles).
+    makeCurrent();
+    uploadPlane(m_texture[0], 0, dataY, linesizeY);
+    uploadPlane(m_texture[1], 1, dataU, linesizeU);
+    uploadPlane(m_texture[2], 2, dataV, linesizeV);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    doneCurrent();
+    update();
 }
 
 void QYUVOpenGLWidget::initializeGL()
@@ -179,6 +185,9 @@ void QYUVOpenGLWidget::paintGL()
     }
 
     m_shaderProgram.release();
+    if (m_onPainted) {
+        m_onPainted();
+    }
 }
 
 void QYUVOpenGLWidget::resizeGL(int width, int height)
@@ -262,16 +271,11 @@ void QYUVOpenGLWidget::deInitTextures()
     m_textureInited = false;
 }
 
-void QYUVOpenGLWidget::updateTexture(GLuint texture, quint32 textureType, quint8 *pixels, quint32 stride)
+void QYUVOpenGLWidget::uploadPlane(GLuint texture, quint32 textureType, quint8 *pixels, quint32 stride)
 {
-    if (!pixels)
-        return;
-
-    QSize size = 0 == textureType ? m_frameSize : m_frameSize / 2;
-
-    makeCurrent();
+    // Caller holds the current context.
+    const QSize size = 0 == textureType ? m_frameSize : m_frameSize / 2;
     glBindTexture(GL_TEXTURE_2D, texture);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(stride));
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, size.width(), size.height(), GL_LUMINANCE, GL_UNSIGNED_BYTE, pixels);
-    doneCurrent();
 }

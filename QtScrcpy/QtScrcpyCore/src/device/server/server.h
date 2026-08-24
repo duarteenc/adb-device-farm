@@ -84,7 +84,8 @@ private:
     bool execute();
     bool connectTo();
     bool startServerByStep();
-    bool readInfo(VideoSocket *videoSocket, QString &deviceName, QSize &size);
+    bool readInfo(VideoSocket *videoSocket, QString &deviceName, QSize &size, bool wait = true);
+    void finishReverseStart();    // farm: async device-info read completion
     void startAcceptTimeoutTimer();
     void stopAcceptTimeoutTimer();
     void startConnectTimeoutTimer();
@@ -97,6 +98,8 @@ private:
     TcpServer m_serverSocket; // only used if !tunnel_forward
     QPointer<VideoSocket> m_videoSocket = Q_NULLPTR;
     QPointer<QTcpSocket> m_controlSocket = Q_NULLPTR;
+    bool m_infoReady = false;     // farm: device-info header parsed (reverse mode)
+    int m_infoGeneration = 0;
     bool m_tunnelEnabled = false;
     bool m_tunnelForward = false; // use "adb forward" instead of "adb reverse"
     int m_acceptTimeoutTimer = 0;

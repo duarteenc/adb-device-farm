@@ -1,0 +1,2 @@
+﻿{"label":"mock-100","devices":100,"seconds":40,"alive":true,"cpu_avg":7.9,"cpu_max":9,"ws_mb_avg":181.2,"ws_mb_max":183.7,"threads_avg":14,"handles_avg":798,"cores":4,"timestamp":"2026-08-24T12:28:26"}
+{"label":"mock-300","devices":300,"seconds":40,"alive":true,"cpu_avg":3.5,"cpu_max":4.1,"ws_mb_avg":206.7,"ws_mb_max":206.8,"threads_avg":13,"handles_avg":795,"cores":4,"timestamp":"2026-08-24T12:29:55"}

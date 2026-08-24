@@ -43,7 +43,7 @@ message(STATUS "[${PROJECT_NAME}] CPU_ARCH:${QC_CPU_ARCH}")
 
 # CMake set
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # default RelWithDebInfo
@@ -108,7 +108,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-set(qt_required_components Widgets Network Multimedia)
+set(qt_required_components Widgets Network Multimedia Sql Concurrent)
 
 if (QT_DESIRED_VERSION MATCHES 6)
     # list(APPEND qt_required_components Core5Compat)
@@ -194,22 +194,50 @@ set(QC_GROUP_CONTROLLER
 )
 source_group(groupcontroller FILES ${QC_GROUP_CONTROLLER})
 
-# farm (v2.0 device-farm dashboard)
+# farm (v3 device-farm control center UI; services live in farm/ -> farmcore)
 set(QC_FARM_SOURCES
-    farm/adbcontrollerdialog.h
-    farm/adbcontrollerdialog.cpp
-    farm/cursorbadge.h
-    farm/cursorbadge.cpp
-    farm/devicesdialog.h
-    farm/devicesdialog.cpp
-    farm/devicetile.h
-    farm/devicetile.cpp
-    farm/farmwindow.h
-    farm/farmwindow.cpp
-    farm/focuspanel.h
-    farm/focuspanel.cpp
-    farm/installapkdialog.h
-    farm/installapkdialog.cpp
+    farm/ui/farmtheme.h
+    farm/ui/farmtheme.cpp
+    farm/ui/cursorbadge.h
+    farm/ui/cursorbadge.cpp
+    farm/ui/devicetile.h
+    farm/ui/devicetile.cpp
+    farm/ui/devicegrid.h
+    farm/ui/devicegrid.cpp
+    farm/ui/focuspanel.h
+    farm/ui/focuspanel.cpp
+    farm/ui/farmmainwindow.h
+    farm/ui/farmmainwindow.cpp
+    farm/ui/widgets/batchjobdialog.h
+    farm/ui/widgets/batchjobdialog.cpp
+    farm/ui/widgets/textsenddialog.h
+    farm/ui/widgets/textsenddialog.cpp
+    farm/ui/widgets/deviceinspector.h
+    farm/ui/widgets/deviceinspector.cpp
+    farm/ui/automation/workfloweditor.h
+    farm/ui/automation/workfloweditor.cpp
+    farm/ui/pages/dashboardpage.h
+    farm/ui/pages/dashboardpage.cpp
+    farm/ui/pages/devicespage.h
+    farm/ui/pages/devicespage.cpp
+    farm/ui/pages/groupspage.h
+    farm/ui/pages/groupspage.cpp
+    farm/ui/pages/automationspage.h
+    farm/ui/pages/automationspage.cpp
+    farm/ui/pages/schedulerpage.h
+    farm/ui/pages/schedulerpage.cpp
+    farm/ui/pages/appspage.h
+    farm/ui/pages/appspage.cpp
+    farm/ui/pages/filespage.h
+    farm/ui/pages/filespage.cpp
+    farm/ui/pages/adbconsolepage.h
+    farm/ui/pages/adbconsolepage.cpp
+    farm/ui/pages/activitypage.h
+    farm/ui/pages/activitypage.cpp
+    farm/ui/pages/performancepage.h
+    farm/ui/pages/performancepage.cpp
+    farm/ui/pages/settingspage.h
+    farm/ui/pages/settingspage.cpp
 )
 source_group(farm FILES ${QC_FARM_SOURCES})
 
@@ -314,6 +342,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE uibase)
 target_include_directories(${PROJECT_NAME} PRIVATE ui)
 target_include_directories(${PROJECT_NAME} PRIVATE render)
 target_include_directories(${PROJECT_NAME} PRIVATE farm)
+target_include_directories(${PROJECT_NAME} PRIVATE farm/ui)
 
 # output dir
 # https://cmake.org/cmake/help/latest/prop_gbl/GENERATOR_IS_MULTI_CONFIG.html
@@ -411,6 +440,7 @@ endif()
 #
 
 add_subdirectory(QtScrcpyCore)
+add_subdirectory(farm)
 
 # Add LunaSVG (need to disable /WX for all LunaSVG targets)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../third_party/lunasvg ${CMAKE_CURRENT_BINARY_DIR}/lunasvg)
@@ -439,5 +469,6 @@ endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ${LINK_LIBS}
     QtScrcpyCore
+    farmcore
     lunasvg::lunasvg
 )

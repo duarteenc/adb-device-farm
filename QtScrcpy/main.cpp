@@ -1,5 +1,6 @@
-﻿#include <QApplication>
+#include <QApplication>
 #include <QDebug>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QIcon>
@@ -15,8 +16,41 @@
 
 #include "config.h"
 #include "dialog.h"
-#include "farmwindow.h"
 #include "mousetap/mousetap.h"
+
+#include "adb/adbexecutor.h"
+#include "adb/adbparsers.h"
+#include "automation/workflowengine.h"
+#include "core/appcontext.h"
+#include "core/farmsettings.h"
+#include "ui/farmmainwindow.h"
+#include "devices/deviceregistry.h"
+#include "discovery/devicediscoveryservice.h"
+
+#ifdef Q_OS_WIN32
+#include <cstdio>
+#include <windows.h>
+// GUI-subsystem executables have no console; attach to the parent's so the
+// --list-devices / --scan / --help modes can print like a normal CLI tool.
+static void attachParentConsole()
+{
+    // When stdout is already a pipe/file (scripts, tests) keep it; otherwise
+    // attach to the parent console so output shows up in the terminal.
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out && out != INVALID_HANDLE_VALUE) {
+        return;
+    }
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        FILE *f = nullptr;
+        freopen_s(&f, "CONOUT$", "w", stdout);
+        freopen_s(&f, "CONOUT$", "w", stderr);
+    }
+}
+#else
+static void attachParentConsole() {}
+#endif
+
+static int runCliMode(const farm::AppContext::Options &opt);
 
 static Dialog *g_mainDlg = Q_NULLPTR;
 static QtMessageHandler g_oldMessageHandler = Q_NULLPTR;
@@ -138,44 +172,91 @@ int main(int argc, char *argv[])
     const bool farmByName =
         QFileInfo(QCoreApplication::applicationFilePath()).completeBaseName().contains(
             "Farmer", Qt::CaseInsensitive);
-    if (a.arguments().contains("--farm") || farmByName) {
-        // Startup splash: branded loading screen while the dashboard builds and the
-        // first `adb devices` runs (which then auto-connects every phone).
+    const farm::AppContext::Options farmOptions = farm::AppContext::parseArguments(a.arguments());
+    if (farmOptions.help) {
+        attachParentConsole();
+        fputs(farm::AppContext::usageText().toUtf8().constData(), stdout);
+        fflush(stdout);
+        return 0;
+    }
+    if (farmOptions.listDevices || farmOptions.scan) {
+        attachParentConsole();
+        return runCliMode(farmOptions);
+    }
+
+    if (farmOptions.farm || a.arguments().contains("--farm") || farmByName) {
+        // Configuration, database, adb executor and the known-device registry come
+        // up before any window; discovery/mirroring start once the UI is visible.
+        farm::AppContext::Options opts = farmOptions;
+        opts.farm = true;
+        a.setApplicationName(QStringLiteral("ADB Device Farm"));
+        a.setApplicationDisplayName(QStringLiteral("ADB Device Farm"));
+        farm::AppContext::instance().initialize(opts);
+
+        // Startup splash while the window builds and the first `adb devices` runs.
         const int kSplashW = 440;
         const int kSplashH = 200;
         QPixmap splashPix(kSplashW, kSplashH);
-        splashPix.fill(QColor(0x0f, 0x14, 0x22));    // matches the app background
+        splashPix.fill(QColor(0x0b, 0x0f, 0x17));
         {
             QPainter p(&splashPix);
             p.setRenderHint(QPainter::Antialiasing, true);
             p.setPen(QColor(0xff, 0xff, 0xff));
             QFont titleFont = p.font();
-            titleFont.setPointSize(30);
+            titleFont.setPointSize(24);
             titleFont.setBold(true);
             p.setFont(titleFont);
-            // "333Farmer" centred, leaving room for the status message at the bottom.
-            p.drawText(QRect(0, 0, kSplashW, kSplashH - 30), Qt::AlignCenter,
-                       QStringLiteral("333Farmer"));
+            p.drawText(QRect(0, 0, kSplashW, kSplashH - 30), Qt::AlignCenter, QStringLiteral("ADB Device Farm"));
         }
-
         QSplashScreen splash(splashPix);
         splash.show();
-        splash.showMessage(QObject::tr("Conectando teléfonos…"),
-                           Qt::AlignBottom | Qt::AlignHCenter, QColor(0x9c, 0xb3, 0xd6));
+        splash.showMessage(QObject::tr("Loading devices…"), Qt::AlignBottom | Qt::AlignHCenter, QColor(0x9c, 0xb3, 0xd6));
         a.processEvents();
 
-        auto *farm = new FarmWindow();
-        farm->resize(1280, 820);
-        farm->showMaximized();
+        auto *farm = new farm::FarmMainWindow();
+        const QByteArray geometry = farm::FarmSettings::instance().value(QStringLiteral("ui/geometry")).toByteArray();
+        if (!geometry.isEmpty()) {
+            farm->restoreGeometry(geometry);
+            farm->show();
+        } else {
+            farm->resize(1440, 860);
+            farm->showMaximized();
+        }
+        // The window is visible: now start discovery, mirroring, keep-awake, health, scheduler.
+        farm::AppContext::instance().startServices();
 
-        // Close the splash once the first device list arrives (phones start
-        // connecting), with a hard fallback so it never lingers.
-        QObject::connect(farm, &FarmWindow::firstDevicesReady, &splash,
-                         [&splash, farm]() { splash.finish(farm); });
-        QTimer::singleShot(6000, &splash, [&splash, farm]() { splash.finish(farm); });
+        QObject::connect(farm, &farm::FarmMainWindow::firstDevicesReady, &splash, [&splash, farm]() { splash.finish(farm); });
+        QTimer::singleShot(4000, &splash, [&splash, farm]() { splash.finish(farm); });
+
+        // --run-workflow "Name" [--targets a,b,group:Box1]: start once services are up.
+        if (!opts.runWorkflow.isEmpty()) {
+            const QString wfName = opts.runWorkflow;
+            const QStringList targetSpec = opts.workflowTargets;
+            QTimer::singleShot(8000, farm, [wfName, targetSpec]() {
+                bool found = false;
+                const farm::Workflow wf = farm::WorkflowEngine::loadWorkflow(wfName, &found);
+                if (!found) {
+                    qWarning() << "workflow not found:" << wfName;
+                    return;
+                }
+                QStringList targets;
+                for (const QString &t : targetSpec) {
+                    if (t.startsWith(QLatin1String("group:"))) {
+                        targets << farm::WorkflowEngine::resolveTargets(QStringLiteral("group"), t.mid(6), QStringList());
+                    } else {
+                        targets << t;
+                    }
+                }
+                if (targetSpec.isEmpty()) {
+                    targets = farm::WorkflowEngine::resolveTargets(QStringLiteral("all"), QString(), QStringList());
+                }
+                farm::WorkflowEngine::instance().start(wf, targets, farm::FarmSettings::instance().automationConcurrency(), QStringLiteral("command line"));
+            });
+        }
 
         int farmRet = a.exec();
         delete farm;
+        farm::AppContext::instance().shutdown();
 #if defined(Q_OS_WIN32) || defined(Q_OS_OSX)
         MouseTap::getInstance()->quitMouseEventTap();
 #endif
@@ -338,4 +419,81 @@ void myMessageOutput(QtMsgType type, const QMessageLogContext &context, const QS
     if (QtFatalMsg == type) {
         //abort();
     }
+}
+
+// --list-devices / --scan: headless helpers for scripting and testing.
+static int runCliMode(const farm::AppContext::Options &opt)
+{
+    farm::AppContext::Options init = opt;
+    farm::AppContext::instance().initialize(init);
+    int exitCode = 0;
+    QEventLoop loop;
+    auto printDevices = [&]() {
+        farm::DeviceRegistry::instance().autoNumber();    // a fresh registry (portable/CLI) has no numbers yet
+        const QList<farm::DeviceRecord> all = farm::DeviceRegistry::instance().all();
+        QStringList ids;
+        for (const farm::DeviceRecord &r : all) {
+            ids << r.id;
+        }
+        ids = farm::DeviceRegistry::instance().sorted(farm::DeviceRegistry::SortKey::Ip, true, ids);
+        printf("%-6s %-24s %-14s %-18s %-10s %s\n", "NUM", "ID", "STATE", "MODEL", "ANDROID", "GROUP");
+        int online = 0;
+        for (const QString &id : ids) {
+            const farm::DeviceRecord r = farm::DeviceRegistry::instance().get(id);
+            if (r.isOnline()) {
+                ++online;
+            }
+            printf("%-6s %-24s %-14s %-18s %-10s %s\n", r.numberString().toUtf8().constData(), r.id.toUtf8().constData(),
+                   farm::deviceStateName(r.state).toUtf8().constData(), r.model.toUtf8().constData(),
+                   r.androidVersion.toUtf8().constData(), r.group.toUtf8().constData());
+        }
+        printf("%d device(s), %d online\n", static_cast<int>(ids.size()), online);
+        fflush(stdout);
+    };
+
+    if (opt.scan) {
+        farm::DeviceDiscoveryService &d = farm::DeviceDiscoveryService::instance();
+        QObject::connect(&d, &farm::DeviceDiscoveryService::scanProgress, [](int done, int total) {
+            fprintf(stderr, "\nscanning %d / %d", done, total);
+        });
+        QObject::connect(&d, &farm::DeviceDiscoveryService::scanFinished, [&](int found, int connected, qint64 ms) {
+            fprintf(stderr, "\nscan finished: %d host(s) answering, %d newly connected, %lld ms\n", found, connected, static_cast<long long>(ms));
+            // one more `adb devices` so states are final
+            farm::AdbExecutor::instance().devices(&loop, [&](const farm::AdbResult &) {
+                QTimer::singleShot(500, &loop, [&]() {
+                    printDevices();
+                    loop.quit();
+                });
+            });
+        });
+        QTimer::singleShot(120000, &loop, [&]() {
+            fprintf(stderr, "scan timed out\n");
+            exitCode = 2;
+            loop.quit();
+        });
+        d.quickRefresh();
+        d.fullScan();
+        loop.exec();
+    } else {
+        farm::AdbExecutor::instance().devices(&loop, [&](const farm::AdbResult &r) {
+            if (!r.ok) {
+                fprintf(stderr, "adb devices failed: %s\n", r.error.toUtf8().constData());
+                exitCode = 1;
+            } else {
+                const QList<farm::adb::AdbDeviceInfo> list = farm::adb::parseDevicesList(r.stdOut);
+                for (const farm::adb::AdbDeviceInfo &info : list) {
+                    farm::DeviceRegistry::instance().upsertFromAdb(info);
+                }
+            }
+            printDevices();
+            loop.quit();
+        });
+        QTimer::singleShot(30000, &loop, [&]() {
+            exitCode = 2;
+            loop.quit();
+        });
+        loop.exec();
+    }
+    farm::AppContext::instance().shutdown();
+    return exitCode;
 }

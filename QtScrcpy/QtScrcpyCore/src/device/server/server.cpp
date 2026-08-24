@@ -27,27 +27,67 @@ Server::Server(QObject *parent) : QObject(parent)
         QTcpSocket *tmp = m_serverSocket.nextPendingConnection();
         if (dynamic_cast<VideoSocket *>(tmp)) {
             m_videoSocket = dynamic_cast<VideoSocket *>(tmp);
-            if (!m_videoSocket->isValid() || !readInfo(m_videoSocket, m_deviceName, m_deviceSize)) {
+            if (!m_videoSocket->isValid()) {
                 stop();
                 emit serverStarted(false);
+                return;
             }
+            // Farm change: the device-info header is read asynchronously (upstream
+            // blocked the GUI thread up to 3 s per device in readInfo()).
+            m_infoReady = false;
+            const int generation = ++m_infoGeneration;
+            auto tryRead = [this]() {
+                if (m_infoReady || !m_videoSocket) {
+                    return;
+                }
+                if (m_videoSocket->bytesAvailable() < DEVICE_NAME_FIELD_LENGTH + 12) {
+                    return;
+                }
+                disconnect(m_videoSocket, &QTcpSocket::readyRead, this, nullptr);
+                if (!readInfo(m_videoSocket, m_deviceName, m_deviceSize, false)) {
+                    stop();
+                    emit serverStarted(false);
+                    return;
+                }
+                m_infoReady = true;
+                if (m_controlSocket && m_controlSocket->isValid()) {
+                    finishReverseStart();
+                }
+            };
+            connect(m_videoSocket, &QTcpSocket::readyRead, this, tryRead);
+            QTimer::singleShot(3000, this, [this, generation]() {
+                if (!m_infoReady && generation == m_infoGeneration && m_videoSocket) {
+                    qInfo("readInfo timeout");
+                    stop();
+                    emit serverStarted(false);
+                }
+            });
+            tryRead();
         } else {
             m_controlSocket = tmp;
             if (m_controlSocket && m_controlSocket->isValid()) {
-                // we don't need the server socket anymore
-                // just m_videoSocket is ok
-                m_serverSocket.close();
-                // we don't need the adb tunnel anymore
-                disableTunnelReverse();
-                m_tunnelEnabled = false;
-                emit serverStarted(true, m_deviceName, m_deviceSize);
+                if (m_infoReady) {
+                    finishReverseStart();
+                }
+                // otherwise the pending device-info read completes the start
             } else {
                 stop();
                 emit serverStarted(false);
             }
-            stopAcceptTimeoutTimer();
         }
     });
+}
+
+void Server::finishReverseStart()
+{
+    // we don't need the server socket anymore
+    // just m_videoSocket is ok
+    m_serverSocket.close();
+    // we don't need the adb tunnel anymore
+    disableTunnelReverse();
+    m_tunnelEnabled = false;
+    stopAcceptTimeoutTimer();
+    emit serverStarted(true, m_deviceName, m_deviceSize);
 }
 
 Server::~Server() {}
@@ -333,12 +373,15 @@ bool Server::startServerByStep()
     return stepSuccess;
 }
 
-bool Server::readInfo(VideoSocket *videoSocket, QString &deviceName, QSize &size)
+bool Server::readInfo(VideoSocket *videoSocket, QString &deviceName, QSize &size, bool wait)
 {
     QElapsedTimer timer;
     timer.start();
     unsigned char buf[DEVICE_NAME_FIELD_LENGTH + 12];
-    while (videoSocket->bytesAvailable() <= (DEVICE_NAME_FIELD_LENGTH + 12)) {
+    while (videoSocket->bytesAvailable() < (DEVICE_NAME_FIELD_LENGTH + 12)) {
+        if (!wait) {
+            return false;
+        }
         videoSocket->waitForReadyRead(300);
         if (timer.elapsed() > 3000) {
             qInfo("readInfo timeout");

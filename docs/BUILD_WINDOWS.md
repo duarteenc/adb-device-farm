@@ -1,88 +1,89 @@
 # Building on Windows (Qt 6 + MSVC)
 
-This is a native C++/Qt app built with **MSVC x64 + Qt 6**. The notes below reflect the
-toolchain actually installed on this machine.
+Native C++17 / Qt 6 application built with **MSVC x64 + Ninja**. Nothing is
+hard-coded to one machine: the scripts detect the toolchain.
 
-## What's already installed ✅
+## 1. Check what you have
 
-| Component | Location |
-| --- | --- |
-| MSVC compiler | Visual Studio **Build Tools 2026** |
-| Qt | **6.11.1** at `C:\Qt\6.11.1` |
-| CMake (bundled with Qt) | `C:\Qt\Tools\CMake_64\bin\cmake.exe` |
-| Ninja (bundled with Qt) | `C:\Qt\Tools\Ninja\ninja.exe` |
-| FFmpeg (MSVC import libs) | `QtScrcpy\QtScrcpyCore\src\third_party\ffmpeg\lib\x64` |
-| adb | `C:\platform-tools\adb.exe` (core also bundles its own) |
-
-## The one missing piece ⚠️ — Qt's MSVC kit
-
-Qt 6.11.1 is installed with the **MinGW** kit only. Qt libraries are ABI-specific to the
-compiler, so MinGW Qt cannot link against MSVC. Add the MSVC kit:
-
-1. Run **`C:\Qt\MaintenanceTool.exe`** → *Add or remove components*.
-2. Expand **Qt → Qt 6.11.1** and check **"MSVC 2022 64-bit"**.
-   *(Component id: `qt.qt6.6111.win64_msvc2022_64`.)*
-3. Install. You'll get `C:\Qt\6.11.1\msvc2022_64`.
-
-> Qt's `msvc2022_64` binaries are ABI-compatible with the VS Build Tools **2026** compiler
-> (MSVC keeps a stable ABI across 2015–2022+), so this kit works with what you have.
-
-The Windows build path of QtScrcpyCore links FFmpeg from `lib/x64` (MSVC `.lib` files) and
-upstream's CI only tests MSVC on Windows — hence MSVC, not MinGW.
-
----
-
-## Building
-
-Open the **"x64 Native Tools Command Prompt for VS 2026"** from the Start menu (this puts
-`cl.exe` on PATH). Then, at the repo root:
-
-```bat
-:: Use the CMake + Ninja bundled with Qt
-set PATH=C:\Qt\Tools\CMake_64\bin;C:\Qt\Tools\Ninja;%PATH%
-
-:: Configure + build via the provided preset (points at C:\Qt\6.11.1\msvc2022_64)
-cmake --preset msvc-x64
-cmake --build --preset msvc-x64
+```powershell
+.\scripts\check-environment.ps1
 ```
 
-Or the explicit form, if you prefer:
-
-```bat
-cmake -S . -B build -G Ninja ^
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
-  -DCMAKE_PREFIX_PATH=C:/Qt/6.11.1/msvc2022_64
-
-cmake --build build
+```
+Git                    PASS   git version 2.54.0.windows.1 @ C:\Program Files\Git\cmd\git.exe
+GitHub CLI             WARN   not found - winget install GitHub.cli (optional, for PRs)
+MSVC                   PASS   toolset 14.51.36231 @ C:\Program Files\Microsoft Visual Studio\18\Community
+Qt                     PASS   Qt 6.11.1 @ C:\Qt\6.11.1\msvc2022_64
+Qt MSVC kit            PASS   Core Widgets Network Multimedia OpenGL OpenGLWidgets Sql Concurrent Test
+CMake                  PASS   cmake version 4.3.1 @ ...\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
+Ninja                  PASS   ninja 1.13.2 @ ...\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe
+ADB                    PASS   Android Debug Bridge version 1.0.41 ...
+FFmpeg project libs    PASS   ...\QtScrcpyCore\src\third_party\ffmpeg (lib/x64 + bin/x64 + include)
+lunasvg submodule      PASS   initialized
+OpenGL                 PASS   Intel(R) HD Graphics 4000 ...
 ```
 
-The binary is written to `output\x64\RelWithDebInfo\QtScrcpy.exe`. The CMake post-build
-step already copies the FFmpeg DLLs, `adb.exe`, and `scrcpy-server` next to it.
+## 2. Install what is missing
 
-### Qt runtime DLLs
-
-The `.exe` still needs the Qt DLLs. Deploy them once with `windeployqt`:
-
-```bat
-C:\Qt\6.11.1\msvc2022_64\bin\windeployqt.exe output\x64\RelWithDebInfo\QtScrcpy.exe
+```powershell
+.\scripts\bootstrap.ps1
 ```
 
-Then run `output\x64\RelWithDebInfo\QtScrcpy.exe`.
+- Git, GitHub CLI, CMake, Ninja, Android platform-tools → **winget** (official packages)
+- Qt 6.11.1 MSVC 2022 64-bit (qtbase, qtsvg, qttools, qtdeclarative, qtmultimedia,
+  qtshadertools, qtimageformats) → `scripts\install-qt.py` downloads the archives from
+  **download.qt.io** (the Qt Online Installer's own repository), verifies the published
+  SHA-256 sums and extracts to `C:\Qt\6.11.1\msvc2022_64`. Needs Python 3 + `pip install py7zr`.
+  You can instead use the Qt Online Installer / Maintenance Tool (component
+  `qt.qt6.6111.win64_msvc2022_64` + Qt Multimedia).
+- Visual Studio (Community or Build Tools) with *Desktop development with C++* must be
+  installed manually (the script prints the winget command). Any VS 2022/2026 works — the
+  Qt msvc2022 kit is ABI-compatible.
 
----
+**MinGW does not work**: FFmpeg ships MSVC import libraries and the project builds with `/WX`.
 
-## First milestone
+## 3. Build
 
-Build the **unmodified** upstream and confirm a single USB device mirrors with low
-latency. Once that's green, we start the v2.0 farm extension (see
-[`ARCHITECTURE_V2.md`](ARCHITECTURE_V2.md), phase 2).
+```powershell
+Get-Process QtScrcpy -ErrorAction SilentlyContinue | Stop-Process -Force   # a running exe locks the link step
+cmd /c scripts\build.bat            # RelWithDebInfo
+cmd /c scripts\build.bat debug      # Debug preset
+```
+
+`build.bat` runs `vcvars64.bat` (found through `vswhere`), picks Qt from `%QT_ROOT%`
+→ `C:\Qt\6.11.1\msvc2022_64` → any `C:\Qt\6.*\msvc*_64`, Ninja/CMake from Qt Tools → the
+Visual Studio bundled copies → `PATH`, then `cmake --preset msvc-x64` + `cmake --build`.
+Success prints `[build] BUILD_OK`. Output:
+
+```
+output\x64\RelWithDebInfo\QtScrcpy.exe      (+ FFmpeg DLLs, adb.exe, scrcpy-server copied by CMake)
+output\x64\RelWithDebInfo\tests\tst_*.exe   (unit tests, Qt runtime deployed automatically)
+```
+
+Qt runtime DLLs for the main exe are deployed once with `windeployqt`
+(`scripts\run-farm.ps1` does it when `Qt6Core.dll` is missing):
+
+```powershell
+C:\Qt\6.11.1\msvc2022_64\bin\windeployqt.exe --no-translations output\x64\RelWithDebInfo\QtScrcpy.exe
+```
+
+## 4. Run / test / package
+
+```powershell
+.\scripts\run-farm.ps1                       # QtScrcpy.exe --farm, verifies the process stays alive
+cmd /c scripts\test.bat                      # ctest — 11 test binaries
+.\scripts\measure-perf.ps1 -Devices 10 -Load # CPU/RAM sampling (see docs\PERFORMANCE_*.md)
+.\scripts\package-portable.ps1               # dist\ADBDeviceFarm-portable-<ver>.zip
+```
 
 ## Troubleshooting
 
-- **`Could not find a package configuration file provided by "Qt6"`** — the MSVC kit isn't
-  installed yet, or `CMAKE_PREFIX_PATH` doesn't point at `C:\Qt\6.11.1\msvc2022_64`.
-- **`cl.exe is not recognized`** — you're not in the *x64 Native Tools Command Prompt*.
-- **`'cmake'/'ninja' not recognized`** — add the bundled paths to `PATH` (see above) or call
-  them by full path.
-- **App starts but no devices** — confirm `adb devices` lists your phone and USB debugging is
-  authorized on the device.
+- **`Could not find a package configuration file provided by "Qt6"`** — Qt MSVC kit missing
+  or `QT_ROOT` wrong; re-run `check-environment.ps1`.
+- **`cl.exe is not recognized`** — Visual Studio C++ workload missing; `build.bat` prints the
+  installation it found (or did not).
+- **`LNK1168: cannot open ...QtScrcpy.exe`** — the app is running; kill it first.
+- **App exits immediately** — Qt DLLs not deployed (see step 3) or a plugin missing
+  (`platforms\qwindows.dll`, `sqldrivers\qsqlite.dll`).
+- **Windows Firewall prompt for adb.exe** — allow on private networks; the farm only needs
+  localhost + LAN.
